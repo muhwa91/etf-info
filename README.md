@@ -47,3 +47,7 @@ python test_accuracy.py           # 정확도 테스트
 ## 🔐 보안 메모
 
 - KIS 키·텔레그램 토큰 등 비밀정보는 `kis_config.json`·`telegram_config.json`·`token_cache.json` 등 별도 설정 파일로 관리하며, 모두 `.gitignore`로 저장소에서 제외합니다.
+
+## 🤖 개발 방식
+
+이 프로젝트는 역할별 AI 에이전트 팀(기획·백엔드·프론트엔드·QA·리뷰·보안)을 직접 구성·운영하는 [AI Agent Workspace](https://github.com/muhwa91/ai-agent-workspace) 거버넌스 아래에서 개발·유지보수됩니다 — 훅 기반 품질 게이트, 비공개 모노레포 → 공개 미러 워크플로우.
