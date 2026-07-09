@@ -30,7 +30,7 @@
 - **소스 다중화·Fallback** — KIS·Yahoo·네이버 세 소스를 조합하고, 변경/지연 시 fallback 처리
 - **레이트리밋 대응** — 토큰 캐싱(재사용)과 백오프 재시도로 API 호출 제한 회피
 - **시간대 인지 로직** — 장중/장후 상태에 따라 비교 기준과 N/A 처리를 자동 정렬
-- **정확도 검증** — 예측값과 실측값을 비교하는 정확도 테스트 스크립트 포함(`test_accuracy.py`)
+- **정확도 검증** — 예측값과 실측값을 비교하는 정확도 테스트 스크립트 포함(`test_accuracy.py`), 동시호가 게이트 등 순수함수는 단위 테스트로 회귀 방지(`test_auction_gate.py`)
 
 ## 실행 방법
 
@@ -40,8 +40,9 @@ pip install requests
 # 설정 파일(예시 → 실제 키 입력, 실제 파일은 커밋하지 않음)
 # kis_config.json / telegram_config.json 등에 키 입력
 
-python tiger_etf_simulator.py     # 시뮬레이터 실행
-python test_accuracy.py           # 정확도 테스트
+python tiger_etf_simulator.py            # 시뮬레이터 실행
+python -m unittest test_auction_gate.py  # 단위 테스트
+python test_accuracy.py                  # 정확도 수동 점검 (라이브 API 의존)
 ```
 
 ## 보안 메모
