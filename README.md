@@ -1,54 +1,89 @@
-# ETF Info · TIGER ETF 실시간 NAV 예측 시뮬레이터
+# etf_info — TIGER 미국우주테크 ETF 개장 예측기
 
-미국 기초자산과 환율 변동을 실시간으로 추적해, TIGER 미국우주테크 ETF의 **당일 예상 NAV·주가를 예측**하고 실제값과의 괴리율을 시뮬레이션하는 도구입니다. 외부 API 연동·자동화·정확도 보정 로직을 직접 설계했습니다.
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
+![Apps Script](https://img.shields.io/badge/Apps_Script-4285F4?logo=googleappsscript&logoColor=white)
+![Telegram](https://img.shields.io/badge/Telegram-26A5E4?logo=telegram&logoColor=white)
 
-> Python 단일 스크립트 · 실측 대비 약 99.9% 정확도
+> 미국 우주테크 종목과 환율을 추적해 **TIGER 미국우주테크 ETF(`0183J0`)의 그날 예상 시가를 개장 전 아침 08:30에 텔레그램으로 알려주는** 개인용 예측 스크립트.
 
----
+<!-- 스크린샷: 텔레그램 발송 메시지 (추후) -->
+
+동시호가에서 KIS 예상체결가(`antc_cnpr`)를 수집해 예상 시가를 발송하고, 정규장에는 KIS iNAV로 실시간 괴리율을 비교한다.
+
+## 발송 흐름 (아침 08:30 예상 시가)
+
+```mermaid
+sequenceDiagram
+  participant GAS as GAS 알람
+  participant GHA as GitHub Actions
+  participant Sim as simulator
+  participant KIS
+  participant TG as Telegram
+  GAS->>GHA: workflow_dispatch (08:20~08:32)
+  GHA->>Sim: python ... --auction-only --send-at 0830
+  Sim->>Sim: 중복전송 마커 확인 · 08:30까지 대기
+  Sim->>KIS: 토큰 · antc_cnpr(예상체결가) 수집
+  alt 예상체결가 유효
+    Sim->>TG: 예상 시가 발송 + 마커 기록
+  else KIS 실패
+    Sim->>TG: 네이버 폴백으로 예상 시가 발송
+  end
+```
+
+## Quick Start
+
+```powershell
+pip install -r requirements.txt
+python tiger_etf_simulator.py     # 현재 시장 상태에 맞춰 자동 판정
+```
+
+설정은 예시 파일을 복사해 실제 키를 채운다:
+
+- `kis_config.example.json` → `kis_config.json` — KIS(한국투자증권) OpenAPI 키
+- `telegram_config.example.json` → `telegram_config.json` — 텔레그램 봇 토큰·chat id
+
+> 실제 키를 채운 설정 파일과 런타임 토큰 캐시는 `.gitignore` 대상 — 커밋 금지.
 
 ## 주요 기능
 
-- **실시간 NAV 예측** — 미국 기초자산 시세와 환율(USD/KRW)을 추적해 당일 예상 NAV·ETF 가격 산출
-- **정확도 보정 로직**
-  - 기초자산 비중 **동적 정규화**(리밸런싱 자동 대응)
-  - 비상장 자산(SpaceX 등) **편입 시차 보정**
-  - 일할 신탁보수 차감
-- **장중/장후 자동 전환** — 장중에는 실시간 오차 비교, 장후·새벽에는 익영업일 예측 모드로 자동 정렬
-- **알림·자동화** — Telegram 알림 연동, GitHub Actions 스케줄 실행
+| 기능 | 설명 |
+|---|---|
+| 장전 예상 시가 알림 | 평일 08:30 동시호가에서 KIS 예상체결가(`antc_cnpr`)를 수집해 그날 시가를 예측·발송(하루 1회) |
+| 장중 iNAV 괴리 확인 | 정규장(09:00~15:30)엔 KIS iNAV로 실시간 NAV·괴리율 비교(`live` 모드) |
+| 시간대 모드 자동 전환 | 장중(실시간 비교) ↔ 장후/새벽(익영업일 예측) 자동 정렬(`--mode auto`) |
+| 하루 1회 발송 게이트 | 아침 창에 여러 번 예약 실행돼도 유효한 예상체결가일 때 딱 한 번만 전송(중복 방지 마커) |
+| 정확도 보정 로직 | 비중 동적 정규화 · SPCX 편입 시차 보정 · 일할 신탁보수(연 0.49%) 차감 · 전일종가 바인딩 |
+| 폴백 · 백오프 | KIS 실패 시 네이버 금융 스크래핑 폴백 · 레이트리밋 백오프 · 거래소 폴백 |
+
+## Why
+
+GitHub Actions cron은 정시 발화를 보장하지 못한다(실측 08:30 지시가 11:03에 실행). 그래서 **GAS 알람이 정각에 워크플로를 깨우고**, 스크립트는 상태 서버 없이 파일 캐시만으로 실행 간 상태를 잇는다. ETF 개장 예상 시가를 아침에 손안으로 받아보고 싶었고, 상용 도구엔 없는 예측이라 직접 만들었다.
 
 ## 기술 스택
 
-| 구분 | 사용 기술 |
-|------|-----------|
-| Language | Python 3 (의존성 `requests` + 표준 라이브러리) |
-| 외부 API | 한국투자증권(KIS), Yahoo Finance(환율·기초자산), 네이버 금융(자산구성·NAV) |
-| 자동화 | Telegram Bot, GitHub Actions |
-| Lint | ruff |
+| 영역 | 선택 | 이유 |
+|---|---|---|
+| 언어 | Python 3.11+ | 표준 라이브러리로 HTTP·JSON·날짜 처리, 의존성은 `requests` 1개 |
+| 프레임워크 | 없음 | 하루 몇 회 실행되는 단발 스크립트 → 웹/DI 프레임워크는 과설계 |
+| 시세·환율 | KIS OpenAPI(주) + 네이버(폴백) | 보유 KIS 계정으로 iNAV·예상체결가·환율까지 한 곳에서, 실패 시 무인증 폴백 |
+| 스케줄러 | GAS `workflow_dispatch` + GitHub cron 백업 | cron 정시성 부재를 GAS 정각 발화로 우회 |
+| 저장 | 로컬 JSON | 상태가 작고 단일 실행자 → DB 불필요 |
+| 알림 | Telegram Bot | 무료·즉시·봇 토큰만으로 push |
 
-## 핵심 설계 포인트
+## 자동 실행
 
-- **소스 다중화·Fallback** — KIS·Yahoo·네이버 세 소스를 조합하고, 변경/지연 시 fallback 처리
-- **레이트리밋 대응** — 토큰 캐싱(재사용)과 백오프 재시도로 API 호출 제한 회피
-- **시간대 인지 로직** — 장중/장후 상태에 따라 비교 기준과 N/A 처리를 자동 정렬
-- **정확도 검증** — 예측값과 실측값을 비교하는 정확도 테스트 스크립트 포함(`test_accuracy.py`), 동시호가 게이트 등 순수함수는 단위 테스트로 회귀 방지(`test_auction_gate.py`)
+- **주 경로**: GAS 알람([apps_script/](apps_script/)) — 평일 아침 GitHub 워크플로를 `workflow_dispatch`로 정각에 깨움. 설치 절차는 [apps_script/README.md](apps_script/README.md) 참고.
+- **백업**: GitHub Actions cron([.github/workflows/run_simulator.yml](.github/workflows/run_simulator.yml), 08:30 KST) + 웹 수동 실행(`workflow_dispatch`)
 
-## 실행 방법
+## 테스트 · 린트
 
-```bash
-pip install requests
-
-# 설정 파일(예시 → 실제 키 입력, 실제 파일은 커밋하지 않음)
-# kis_config.json / telegram_config.json 등에 키 입력
-
-python tiger_etf_simulator.py            # 시뮬레이터 실행
-python -m unittest test_auction_gate.py  # 단위 테스트
-python test_accuracy.py                  # 정확도 수동 점검 (라이브 API 의존)
+```powershell
+python -m unittest test_auction_gate.py   # 동시호가 발송 게이트 순수함수 (자동/회귀)
+python test_accuracy.py                    # 정확도 수동 점검 (라이브 API 의존, 시연용)
+ruff check . ; ruff format .
 ```
 
-## 보안 메모
+## 문서
 
-- KIS 키·텔레그램 토큰 등 비밀정보는 `kis_config.json`·`telegram_config.json`·`token_cache.json` 등 별도 설정 파일로 관리하며, 모두 `.gitignore`로 저장소에서 제외합니다.
-
-## 개발 방식
-
-이 프로젝트는 역할별 AI 에이전트 팀(기획·백엔드·프론트엔드·QA·리뷰·보안)을 직접 구성·운영하는 [AI Agent Workspace](https://github.com/muhwa91/ai-agent-workspace) 거버넌스 아래에서 개발·유지보수됩니다 — 훅 기반 품질 게이트, 비공개 모노레포 → 공개 미러 워크플로우.
+- GAS 알람 설치 가이드: [apps_script/README.md](apps_script/README.md)
+- 진행 이력: [docs/progress.html](docs/progress.html)
