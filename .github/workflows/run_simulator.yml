@@ -32,5 +32,4 @@ jobs:
         KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
         KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
       run: |
-        python tiger_etf_simulator.py --mode market
-
+        python tiger_etf_simulator.py --auction-only
