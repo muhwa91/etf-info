@@ -24,12 +24,12 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 
 1. https://script.google.com → **새 프로젝트**
 2. 프로젝트 이름: 예) `etf-0830-alarm`
-3. 좌측 **프로젝트 설정(⚙️)** → **시간대(Time zone)** 를 **(GMT+09:00) Seoul** 로 변경
+3. 좌측 **프로젝트 설정()** → **시간대(Time zone)** 를 **(GMT+09:00) Seoul** 로 변경
 4. `Code.gs` 내용을 지우고, 이 폴더의 **`dispatch.gs`** 내용을 통째로 붙여넣기 → 저장
 
 ## 3. 토큰 등록 (Script Properties)
 
-1. 좌측 **프로젝트 설정(⚙️)** → 아래쪽 **스크립트 속성(Script properties)** → **속성 추가**
+1. 좌측 **프로젝트 설정()** → 아래쪽 **스크립트 속성(Script properties)** → **속성 추가**
    - 속성: `GH_TOKEN`
    - 값: 1번에서 복사한 토큰
 2. 저장
@@ -71,7 +71,7 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 
 ## 🔗 clasp 로 로컬 ↔ Apps Script 연결 (코드 푸시)
 
-`etf_info.js`(동작 중인 GAS 코드) 를 **로컬에서 고치고 곧바로 Apps Script 로 푸시**하기 위해 Google 공식 CLI
+`etf-info.js`(동작 중인 GAS 코드) 를 **로컬에서 고치고 곧바로 Apps Script 로 푸시**하기 위해 Google 공식 CLI
 [`clasp`](https://github.com/google/clasp) 를 이 폴더에 설치해 뒀다(`package.json` 의 devDependency).
 연결·로그인은 완료된 상태(`scriptId` in `.clasp.json`, `muhwa91@gmail.com`). 모든 명령은 **이 `apps_script/` 폴더에서** 실행한다.
 
@@ -80,7 +80,7 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 2. **로그인**(브라우저 OAuth 1회): `npx clasp login`
    로그인 토큰은 홈 폴더 `~/.clasprc.json` 에 저장된다(깃에 안 올라감 — `.gitignore` 제외).
 3. **Script ID 연결**: 이미 `.clasp.json` 에 연결돼 있음
-   (`1sKdyCsCbW3yc1wWDzkba1RhwfEHzntILlaQOx7mUpXfDIv-NheZQbzUF`). 다른 프로젝트면 ⚙️ 프로젝트 설정의 스크립트 ID로 교체.
+   (`1sKdyCsCbW3yc1wWDzkba1RhwfEHzntILlaQOx7mUpXfDIv-NheZQbzUF`). 다른 프로젝트면 프로젝트 설정의 스크립트 ID로 교체.
 
 ### 매번 쓰는 명령
 | 목적 | 명령 |
@@ -93,7 +93,7 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 
 ### 주의
 - `clasp push` 는 **원격을 로컬과 똑같이 맞춘다**(로컬에 없는 서버 파일은 삭제). `.claspignore` 로
-  **`etf_info.js` + `appsscript.json` 만** 푸시되도록 화이트리스트해 둠(node_modules 사고 방지).
-- 동작 중인 서버 코드는 `clasp pull` 로 내려받아 단일 원본 `etf_info.js` 로 채택했다(예전 사본 `dispatch.gs` 는 제거 — 내용 동일).
+  **`etf-info.js` + `appsscript.json` 만** 푸시되도록 화이트리스트해 둠(node_modules 사고 방지).
+- 동작 중인 서버 코드는 `clasp pull` 로 내려받아 단일 원본 `etf-info.js` 로 채택했다(예전 사본 `dispatch.gs` 는 제거 — 내용 동일).
 - **푸시는 코드/매니페스트만 바꾼다.** 등록한 **시간 트리거·Script Properties(`GH_TOKEN`)** 는 그대로 유지된다.
 - 토큰 등 비밀은 절대 `.gs`/깃에 넣지 말 것 → Script Properties 에만.

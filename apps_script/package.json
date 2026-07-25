@@ -2,7 +2,7 @@
   "name": "etf-info-apps-script",
   "version": "1.0.0",
   "private": true,
-  "description": "etf_info GAS 알람(dispatch.gs)을 clasp 로 로컬↔Apps Script 연결",
+  "description": "etf-info GAS 알람(dispatch.gs)을 clasp 로 로컬↔Apps Script 연결",
   "scripts": {
     "login": "clasp login",
     "status": "clasp status",

@@ -2,13 +2,15 @@ import requests
 import time
 import os
 import json
+import csv
+import ast
 import datetime
 import sys
 
 # Windows UTF-8 encoding setup
-if sys.stdout.encoding != 'utf-8':
+if sys.stdout.encoding != "utf-8":
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding="utf-8")
     except AttributeError:
         pass
 
@@ -26,17 +28,17 @@ if (not APP_KEY or not APP_SECRET) and os.path.exists(kis_config_path):
     except Exception:
         pass
 
-BASE_URL   = "https://openapi.koreainvestment.com:9443"
+BASE_URL = "https://openapi.koreainvestment.com:9443"
 
 HOLDINGS = {
     "SPCX": 0.252,
     "LUNR": 0.150,
-    "RDW":  0.150,
+    "RDW": 0.150,
     "RKLB": 0.150,
     "ASTS": 0.070,
     "SATS": 0.070,
-    "PL":   0.070,
-    "FLY":  0.030,
+    "PL": 0.070,
+    "FLY": 0.030,
     "KRMN": 0.030,
     "VOYG": 0.030,
 }
@@ -44,12 +46,12 @@ HOLDINGS = {
 KOREAN_NAMES = {
     "SPCX": "스페이스X",
     "LUNR": "인튜이티브",
-    "RDW":  "레드와이어",
+    "RDW": "레드와이어",
     "RKLB": "로켓랩",
     "ASTS": "AST스페이스",
     "SATS": "에코스타",
-    "PL":   "플래닛랩스",
-    "FLY":  "파이어플라이",
+    "PL": "플래닛랩스",
+    "FLY": "파이어플라이",
     "KRMN": "카만",
     "VOYG": "보이저",
     "GSAT": "글로벌스타",
@@ -66,12 +68,12 @@ for t in HOLDINGS:
 EXCD_MAP = {
     "SPCX": "NAS",
     "LUNR": "NAS",
-    "RDW":  "NYS",
+    "RDW": "NYS",
     "RKLB": "NAS",
     "ASTS": "NAS",
     "SATS": "NAS",
-    "PL":   "NYS",
-    "FLY":  "NAS",
+    "PL": "NYS",
+    "FLY": "NAS",
     "KRMN": "NYS",
     "VOYG": "NYS",
 }
@@ -134,7 +136,9 @@ def wait_until_send_time(target_hm, max_wait_min=40):
     target = now.replace(hour=target_hm // 100, minute=target_hm % 100, second=0, microsecond=0)
     wait_s = (target - now).total_seconds()
     if 0 < wait_s <= max_wait_min * 60:
-        print(f"  ⏲ 목표 전송시각 {target_hm // 100:02d}:{target_hm % 100:02d} KST 까지 약 {int(wait_s)}초 대기 후 전송...")
+        print(
+            f"  ⏲ 목표 전송시각 {target_hm // 100:02d}:{target_hm % 100:02d} KST 까지 약 {int(wait_s)}초 대기 후 전송..."
+        )
         time.sleep(wait_s)
 
 
@@ -159,9 +163,9 @@ def build_market_info_message(date_header, kr_open, us_new_session):
         tail = "시가 예측 - 익일 아침 전송예정"
     else:  # 국내 개장 + 미국 전일 휴장(반영할 변동 없음)
         head = "😴 <b>오늘은 예측을 쉽니다</b>"
-        tail = ("미국장 휴장 ETF에 반영 가격 변동X\n"
-                "미국장 개장 익일 아침 전송예정")
+        tail = "미국장 휴장 ETF에 반영 가격 변동X\n미국장 개장 익일 아침 전송예정"
     return f"<b>[{date_header}]</b>\n\n{head}\n\n{status}\n\n{tail}"
+
 
 # 개장 할인율 모델 상수.
 #   OPEN_DPRT_RATIO : '개장 괴리율 / 종가 괴리율' 비율.
@@ -183,23 +187,25 @@ OPEN_BAND_VOL_DPRT = 5.0
 OPEN_BAND_VOL_RATIO = 0.010
 OPEN_BAND_FB_RATIO = 0.006
 
+
 def safe_float(val, default=0.0):
     try:
         return float(val) if val not in (None, "", " ") else default
     except (ValueError, TypeError):
         return default
 
+
 def send_telegram_message(message):
     import requests
     import os
     import json
-    
+
     print("💬 텔레그램 메시지 전송 중...")
-    
+
     # 1. GitHub Actions 또는 시스템 환경 변수에서 조회
     bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    
+
     # 2. 로컬 테스트용 config 파일에서 조회
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "telegram_config.json")
     if (not bot_token or not chat_id) and os.path.exists(config_path):
@@ -210,20 +216,16 @@ def send_telegram_message(message):
                 chat_id = chat_id or config.get("chat_id")
         except Exception:
             pass
-            
+
     if not bot_token or not chat_id:
         print("  ⚠️ 경고: 텔레그램 설정(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)을 찾을 수 없습니다.")
         print("  로컬 테스트 시 'telegram_config.json' 파일에 아래 형식으로 작성해 두시면 됩니다:")
         print('  {"bot_token": "YOUR_BOT_TOKEN", "chat_id": "YOUR_CHAT_ID"}')
         return False
-        
+
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-    
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+
     # 일시적 네트워크/텔레그램 장애에 대비해 최대 3회 재시도(2초·4초 백오프).
     for attempt in range(1, 4):  # 1, 2, 3
         try:
@@ -243,7 +245,14 @@ def send_telegram_message(message):
     return False
 
 
-def get_token():
+def get_token(deadline_hm=None, max_attempts=4):
+    """KIS 토큰 발급. 캐시(20h) 우선, 없으면 신규 발급.
+
+    deadline_hm 이 주어지면(auction_only 모드에서 전송창 마감시각 HHMM, KST) 그 시각 전까지
+    max_attempts 회 제한을 무시하고 백오프 재시도를 계속한다 — GitHub 러너의 KIS(:9443)
+    ConnectTimeout 이 일시적일 때 전송창 안에서 회복하기 위함. deadline 이 없으면 기존대로
+    최대 max_attempts 회만 시도한다.
+    """
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r") as f:
@@ -255,15 +264,29 @@ def get_token():
         except Exception:
             pass
 
+    kst = datetime.timezone(datetime.timedelta(hours=9))
+    deadline_dt = None
+    if deadline_hm is not None:
+        now = datetime.datetime.now(kst)
+        deadline_dt = now.replace(
+            hour=deadline_hm // 100, minute=deadline_hm % 100, second=0, microsecond=0
+        )
+
     # KIS 토큰 발급 — 해외(GitHub 러너) IP 에서 가끔 연결 타임아웃이 나므로 타임아웃+백오프 재시도.
     last_err = None
-    for attempt in range(1, 5):  # 최대 4회
+    attempt = 0
+    while True:
+        attempt += 1
         try:
-            res = requests.post(f"{BASE_URL}/oauth2/tokenP", json={
-                "grant_type": "client_credentials",
-                "appkey": APP_KEY,
-                "appsecret": APP_SECRET
-            }, timeout=15)
+            res = requests.post(
+                f"{BASE_URL}/oauth2/tokenP",
+                json={
+                    "grant_type": "client_credentials",
+                    "appkey": APP_KEY,
+                    "appsecret": APP_SECRET,
+                },
+                timeout=15,
+            )
             res.raise_for_status()
             data = res.json()
             try:
@@ -275,11 +298,33 @@ def get_token():
             return data["access_token"]
         except Exception as e:
             last_err = e
-            wait = 3 * attempt  # 3, 6, 9s 백오프
-            print(f"  ⚠ KIS 토큰 발급 시도 {attempt}/4 실패: {type(e).__name__} → {wait}s 후 재시도")
-            if attempt < 4:
+            wait = min(3 * attempt, 30)  # 3,6,9…s 백오프(최대 30s)
+            # 마감시각 기반 재시도(우선) — 다음 대기가 마감을 넘기면 중단.
+            if deadline_dt is not None:
+                now = datetime.datetime.now(kst)
+                remaining = (deadline_dt - now).total_seconds()
+                if remaining <= wait:
+                    print(
+                        f"  ⚠ KIS 토큰 발급 시도 {attempt} 실패: {type(e).__name__} → "
+                        f"전송창 마감({deadline_hm:04d} KST) 임박, 재시도 중단"
+                    )
+                    break
+                print(
+                    f"  ⚠ KIS 토큰 발급 시도 {attempt} 실패: {type(e).__name__} → "
+                    f"{wait}s 후 재시도(마감 {deadline_hm:04d}까지 지속)"
+                )
                 time.sleep(wait)
-    raise RuntimeError(f"KIS 토큰 발급 4회 실패(네트워크/일시장애 추정): {last_err}")
+                continue
+            # 기존 동작: 최대 max_attempts 회.
+            print(
+                f"  ⚠ KIS 토큰 발급 시도 {attempt}/{max_attempts} 실패: "
+                f"{type(e).__name__} → {wait}s 후 재시도"
+            )
+            if attempt >= max_attempts:
+                break
+            time.sleep(wait)
+    raise RuntimeError(f"KIS 토큰 발급 실패(네트워크/일시장애 추정): {last_err}")
+
 
 def get_us_price(token, ticker, retry=3):
     headers = {
@@ -307,8 +352,8 @@ def get_us_price(token, ticker, retry=3):
             if data.get("rt_cd") == "0":
                 o = data["output"]
                 current = safe_float(o.get("last"))
-                prev    = safe_float(o.get("base"))
-                rate    = safe_float(o.get("rate"))
+                prev = safe_float(o.get("base"))
+                rate = safe_float(o.get("rate"))
                 if current > 0 and prev > 0:
                     return {"current": current, "prev": prev, "rate": rate, "excd": excd}
                 else:
@@ -325,6 +370,7 @@ def get_us_price(token, ticker, retry=3):
         time.sleep(0.2)
 
     return None
+
 
 def get_usdkrw(token, retry=3):
     """KIS 해외주식 현재가상세(tr_id HHDFS76200200)에서 USD/KRW 환율(t_rate)을 조회.
@@ -379,6 +425,7 @@ def get_usdkrw(token, retry=3):
 
     return None
 
+
 def load_fx_cache():
     """일별 환율 캐시(fx_cache.json) 로드: { "YYYY-MM-DD": t_rate } 형태."""
     if os.path.exists(FX_CACHE_FILE):
@@ -388,6 +435,7 @@ def load_fx_cache():
         except Exception:
             pass
     return {}
+
 
 def save_fx_today(fx_rate):
     """오늘(KST 날짜) 환율을 일별 캐시에 저장. 실행할 때마다 당일 값으로 갱신."""
@@ -402,6 +450,7 @@ def save_fx_today(fx_rate):
             json.dump(cache, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
 
 def load_dprt_cache():
     """일별 괴리율 캐시(dprt_cache.json) 로드.
@@ -466,7 +515,9 @@ def estimate_open_discount(kis_dprt, today_open_dprt=None):
 
     # ★ 룩어헤드 방지: 8시반 개장 전 예측이므로 '오늘'(및 미래) 캐시는 절대 쓰지 않는다.
     #   (오늘의 개장/종가 괴리율은 개장 후에야 알 수 있는 값)
-    today_kst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime("%Y-%m-%d")
+    today_kst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime(
+        "%Y-%m-%d"
+    )
 
     cache = load_dprt_cache()
     open_samples = []
@@ -501,8 +552,16 @@ def estimate_open_discount(kis_dprt, today_open_dprt=None):
 
     clipped = max(-OPEN_DPRT_CAP, min(OPEN_DPRT_CAP, base_close_dprt))
     est = clipped * OPEN_DPRT_RATIO
-    clip_note = f" → 이상치 ±{OPEN_DPRT_CAP:.0f}% 클립 {clipped:+.2f}%" if clipped != base_close_dprt else ""
-    return est, f"{src} {base_close_dprt:+.2f}%{clip_note} × {OPEN_DPRT_RATIO}(개장/종가 비율) = {est:+.2f}%", base_close_dprt
+    clip_note = (
+        f" → 이상치 ±{OPEN_DPRT_CAP:.0f}% 클립 {clipped:+.2f}%"
+        if clipped != base_close_dprt
+        else ""
+    )
+    return (
+        est,
+        f"{src} {base_close_dprt:+.2f}%{clip_note} × {OPEN_DPRT_RATIO}(개장/종가 비율) = {est:+.2f}%",
+        base_close_dprt,
+    )
 
 
 def get_etf_open_nav(token, retry=3):
@@ -531,10 +590,10 @@ def get_etf_open_nav(token, retry=3):
             o1 = data.get("output1", {})
             o2 = data.get("output2", {})
             return {
-                "open_price":    safe_float(o1.get("stck_oprc")),
-                "cur_price":     safe_float(o1.get("stck_prpr")),
-                "oprc_nav":      safe_float(o2.get("oprc_nav")),
-                "cur_nav":       safe_float(o2.get("nav")),
+                "open_price": safe_float(o1.get("stck_oprc")),
+                "cur_price": safe_float(o1.get("stck_prpr")),
+                "oprc_nav": safe_float(o2.get("oprc_nav")),
+                "cur_nav": safe_float(o2.get("nav")),
                 "prdy_clpr_nav": safe_float(o2.get("prdy_clpr_nav")),
             }
         if "초과" in data.get("msg1", ""):
@@ -602,20 +661,21 @@ def get_etf_nav(token):
     )
     data = res.json()
     if data.get("rt_cd") != "0":
-        print(f"  ⚠ ETF iNAV 조회 실패: {data.get('msg1','')}")
+        print(f"  ⚠ ETF iNAV 조회 실패: {data.get('msg1', '')}")
         return None
     o = data["output"]
     return {
-        "nav":           safe_float(o.get("nav")),                # 실시간 추정 iNAV
-        "prdy_last_nav": safe_float(o.get("prdy_last_nav")),      # 전일 확정 NAV
+        "nav": safe_float(o.get("nav")),  # 실시간 추정 iNAV
+        "prdy_last_nav": safe_float(o.get("prdy_last_nav")),  # 전일 확정 NAV
         "nav_prdy_vrss": safe_float(o.get("nav_prdy_vrss")),
         "nav_prdy_ctrt": safe_float(o.get("nav_prdy_ctrt")),
-        "dprt":          safe_float(o.get("dprt")),               # 괴리율(%)
-        "trc_errt":      safe_float(o.get("trc_errt")),           # 추적오차(%)
-        "etf_ntas_ttam": safe_float(o.get("etf_ntas_ttam")),      # 순자산총액
-        "current":       safe_float(o.get("stck_prpr")),          # ETF 현재가
-        "prev":          safe_float(o.get("stck_sdpr")),          # ETF 전일 종가
+        "dprt": safe_float(o.get("dprt")),  # 괴리율(%)
+        "trc_errt": safe_float(o.get("trc_errt")),  # 추적오차(%)
+        "etf_ntas_ttam": safe_float(o.get("etf_ntas_ttam")),  # 순자산총액
+        "current": safe_float(o.get("stck_prpr")),  # ETF 현재가
+        "prev": safe_float(o.get("stck_sdpr")),  # ETF 전일 종가
     }
+
 
 def get_etf_expected_open(token, retry=3):
     """KIS 예상체결가 조회 (tr_id FHKST01010200) — 장전 동시호가(8:30~09:00) 예상 시가.
@@ -652,13 +712,15 @@ def get_etf_expected_open(token, retry=3):
             if antc_cnpr <= 0:
                 return None
             return {
-                "antc_cnpr":          antc_cnpr,                              # 예상체결가
+                "antc_cnpr": antc_cnpr,  # 예상체결가
                 "antc_cntg_prdy_ctrt": safe_float(o2.get("antc_cntg_prdy_ctrt")),  # 예상 전일대비%
-                "antc_cntg_vrss":     safe_float(o2.get("antc_cntg_vrss")),   # 예상 전일대비(원)
-                "antc_vol":           safe_float(o2.get("antc_vol")),         # 예상 거래량
-                "antc_mkop_cls_code": (o2.get("antc_mkop_cls_code") or "").strip(),  # 장운영 구분코드
-                "cur_price":          safe_float(o2.get("stck_prpr")),        # 현재가
-                "prev":               safe_float(o2.get("stck_sdpr")),        # 전일 종가(기준가)
+                "antc_cntg_vrss": safe_float(o2.get("antc_cntg_vrss")),  # 예상 전일대비(원)
+                "antc_vol": safe_float(o2.get("antc_vol")),  # 예상 거래량
+                "antc_mkop_cls_code": (
+                    o2.get("antc_mkop_cls_code") or ""
+                ).strip(),  # 장운영 구분코드
+                "cur_price": safe_float(o2.get("stck_prpr")),  # 현재가
+                "prev": safe_float(o2.get("stck_sdpr")),  # 전일 종가(기준가)
             }
         if "초과" in data.get("msg1", ""):
             wait = 0.5 * (attempt + 1)
@@ -666,6 +728,88 @@ def get_etf_expected_open(token, retry=3):
             time.sleep(wait)
         else:
             break
+    return None
+
+
+# 네이버 금융 폴링 엔드포인트 — KIS(9443) 대체 경로.
+#   GitHub 러너(미국 IP)에서 KIS openapi(:9443) 는 ConnectTimeout 이 잦지만,
+#   네이버 금융(HTTPS 443)은 해외 IP에서도 대체로 접속되므로 KIS 단일 실패점을 우회한다.
+NAVER_POLL_URL = "https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
+
+
+def get_naver_expected_open(code=ETF_CODE, retry=3):
+    """네이버 금융에서 장전 동시호가 예상체결가(예상 시가)·예상 전일대비를 대체 수집.
+
+    엔드포인트: https://polling.finance.naver.com/api/realtime/domestic/stock/{code}
+    응답 datas[0] 주요 필드(Raw = 파싱하기 쉬운 숫자문자열):
+      closePriceRaw                  : 현재가/최근 체결가. **장전 동시호가(08:30~09:00) 동안에는
+                                       이 값이 '예상체결가(예상 시가)' 로 갱신된다** → 이 함수가 뽑는 예상 시가.
+      compareToPreviousClosePriceRaw : 전일대비 절대값(원, 부호 없음)
+      compareToPreviousPrice.name    : 방향(RISING/FALLING/... ) — 전일대비 부호 판정에 사용
+      compareToPreviousPrice.code    : 1=상한 2=상승 3=보합 4=하한 5=하락
+      fluctuationsRatioRaw           : 등락률(%). 동시호가 땐 예상 등락률.
+      marketStatus                   : OPEN/CLOSE/PREOPEN 등 장 상태(참고용)
+
+    ※ 동시호가 시간이 아니면 위 값은 예상치가 아니라 현재가/종가다(호출자가 시간대로 의미를 해석).
+    ※ 반환은 KIS get_etf_expected_open() 과 유사한 형태로 맞춰, 호출부가 antc 처럼 쓸 수 있게 한다.
+
+    반환: {expected_price, prdy_ctrt, prdy_vrss, market_status} (float/str). 유효값 없으면 None.
+    (KIS 함수들의 timeout·재시도·예외처리 스타일을 따른다.)
+    """
+    url = NAVER_POLL_URL.format(code=code)
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://m.stock.naver.com/",
+    }
+    last_err = None
+    for attempt in range(1, retry + 1):
+        try:
+            res = requests.get(url, headers=headers, timeout=10)
+            res.raise_for_status()
+            data = res.json()
+            rows = (data or {}).get("datas") or []
+            price = safe_float(rows[0].get("closePriceRaw")) if rows else 0.0
+            # 값 무효(응답은 왔으나 price<=0)도 네트워크 예외와 동일하게 재시도한다.
+            #   동시호가 극초반엔 예상체결가가 늦게 차서 첫 응답이 0 으로 올 수 있음.
+            if not rows or price <= 0:
+                raise ValueError(
+                    "빈 응답(datas 없음)" if not rows else f"예상체결가 무효(price={price})"
+                )
+            o = rows[0]
+            # 전일대비 부호: 네이버 방향 코드/이름으로 판정한다.
+            #   code 매핑: 1=상한 2=상승 3=보합 4=하한 5=하락. name 은 보조 교차검증.
+            cmp = o.get("compareToPreviousPrice") or {}
+            direction = (cmp.get("name") or "").upper()
+            cmp_code = str(cmp.get("code") or "").strip()
+            is_down = direction in ("FALLING", "LOWER_LIMIT") or cmp_code in ("4", "5")
+            is_flat = direction in ("STEADY", "FLAT", "UNCHANGED") or cmp_code == "3"
+            vrss = safe_float(o.get("compareToPreviousClosePriceRaw"))
+            ctrt = safe_float(o.get("fluctuationsRatioRaw"))
+            if is_flat:  # 보합 → 0 처리
+                vrss = 0.0
+                ctrt = 0.0
+            elif is_down:  # 절대값으로 올 수 있으므로 하락이면 음수 부호 보정
+                vrss = -abs(vrss)
+                ctrt = -abs(ctrt)
+            else:  # 상승/상한 → 양수 보정
+                vrss = abs(vrss)
+                ctrt = abs(ctrt)
+            return {
+                "expected_price": price,  # 동시호가 시간대엔 예상체결가(예상 시가)
+                "prdy_ctrt": ctrt,  # 예상 전일대비율(%)
+                "prdy_vrss": vrss,  # 예상 전일대비(원)
+                "market_status": (o.get("marketStatus") or "").strip(),
+            }
+        except Exception as e:
+            last_err = e
+            wait = 2 * attempt  # 2, 4, 6s 백오프
+            print(
+                f"  ⚠ 네이버 예상체결가 시도 {attempt}/{retry} 실패: "
+                f"{type(e).__name__} → {wait}s 후 재시도"
+            )
+            if attempt < retry:
+                time.sleep(wait)
+    print(f"  ⚠ 네이버 예상체결가 조회 최종 실패: {last_err}")
     return None
 
 
@@ -692,8 +836,14 @@ def get_us_daily(token, ticker, retry=3):
             res = requests.get(
                 f"{BASE_URL}/uapi/overseas-price/v1/quotations/dailyprice",
                 headers=headers,
-                params={"AUTH": "", "EXCD": excd, "SYMB": ticker,
-                        "GUBN": "0", "BYMD": "", "MODP": "1"},
+                params={
+                    "AUTH": "",
+                    "EXCD": excd,
+                    "SYMB": ticker,
+                    "GUBN": "0",
+                    "BYMD": "",
+                    "MODP": "1",
+                },
                 timeout=15,
             )
             data = res.json()
@@ -723,6 +873,7 @@ def get_us_daily(token, ticker, retry=3):
 
     return {}
 
+
 def get_recent_us_dates(token, ticker="RKLB"):
     """KIS 미국 일별 데이터에서 최근 2개 영업일(d0, d1)을 추출. (야후 get_us_trading_dates 대체)"""
     hist = get_us_daily(token, ticker)
@@ -734,6 +885,7 @@ def get_recent_us_dates(token, ticker="RKLB"):
     d0 = (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d")
     return d0, d1
 
+
 def is_korea_market_open(now_kst=None):
     """한국 정규장(평일 09:00~15:30 KST) 여부 → iNAV 신선도 판정 근거."""
     if now_kst is None:
@@ -743,6 +895,40 @@ def is_korea_market_open(now_kst=None):
         return False
     minutes = now_kst.hour * 60 + now_kst.minute
     return 9 * 60 <= minutes <= 15 * 60 + 30
+
+
+def build_naver_auction_message(date_header, naver):
+    """네이버 예상체결가로 만든 장전 동시호가 시가 메시지(KIS 폴백 경로).
+
+    KIS 토큰/예상체결가를 못 얻은 상황에서 네이버 대체분으로 예상 시가를 전한다.
+    NAV·괴리율 등 KIS 기반 상세는 없으므로, 예상 시가·전일대비·범위(±25원)만 담고
+    데이터 출처가 네이버 대체분임을 한 줄로 표기한다.
+    포맷은 본류 KIS 메시지(전일대비 → 예상 시가 → 범위 순, 개행 스타일)에 맞춘다.
+    naver: get_naver_expected_open() 반환 dict.
+    """
+    price = naver["expected_price"]
+    predicted_open = int(round(price / 5) * 5)
+    open_lower = int(round((price - 25) / 5) * 5)
+    open_upper = int(round((price + 25) / 5) * 5)
+    vrss = naver.get("prdy_vrss", 0.0)
+    ctrt = naver.get("prdy_ctrt", 0.0)
+    diff_dir = "🔺" if vrss > 0 else "🔻" if vrss < 0 else "▫️"
+    diff_sign = "+" if vrss > 0 else ""
+    # 폴백 경로는 KIS 휴장/변동 판정(토큰 필요)을 통과하지 못했으므로 '정상'을 단정하지 않는다.
+    #   중립 표기로 대체(장 상태 하드코딩 금지).
+    status_header = "🇰🇷 국내장 · 🇺🇸 미국장 (상태 확인 불가)\n"
+    return (
+        f"<b>[{date_header}]</b>\n"
+        f"{status_header}\n"
+        f"📢 <b>[TIGER 미국우주테크]</b>\n"
+        f"<b>ETF 시가 예측</b>\n\n"
+        f"✨ 전일 대비\n"
+        f"{diff_dir} {diff_sign}{vrss:,.0f}원 ({ctrt:+.2f}%)\n"
+        f"🎯 <b>예상 시가 : <u>{predicted_open:,.0f}원</u></b>\n"
+        f"🔍 <b>범위 : <code>{open_lower:,.0f}원 ~ {open_upper:,.0f}원</code> (±25원)</b>\n\n"
+        f"데이터: 네이버 예상체결가"
+    )
+
 
 def should_poll_auction(
     auction_only: bool,
@@ -797,32 +983,450 @@ def decide_auction_send(
     return "skip"
 
 
+# 네이버 marketStatus 중 '장전 동시호가/장전' 을 뜻하는 값(폴백 전송 허용 상태).
+#   실제 응답값(2026-07 확인): 장마감=CLOSE / 정규장=OPEN.
+#   동시호가/장전 상태는 실측상 PREOPEN 계열로 내려온다(엔드포인트 문서·관측 기준).
+#   → 이 집합에 속할 때만 closePriceRaw 가 '예상체결가(예상 시가)' 의미를 가진다고 본다.
+#   (CLOSE/OPEN 이면 그 값은 각각 종가/현재가라 '예상 시가' 오전송이 되므로 보류.)
+NAVER_PREOPEN_STATUSES = frozenset({"PREOPEN", "PRE_OPEN", "PRE", "BEFORE_OPEN", "EXPECT"})
+
+
+def should_send_naver_fallback(
+    in_preopen_auction: bool,
+    market_status: str,
+    expected_price,
+) -> bool:
+    """네이버 예상체결가 폴백 전송 여부(순수 함수). 부수효과 없음.
+
+    KIS 경로가 막혔을 때 네이버 closePriceRaw 를 '예상 시가'로 내보내도 되는지 판정한다.
+    세 조건을 모두 만족해야 True:
+      ① in_preopen_auction  : 평일(월~금) 08:30~09:00 KST 창 안(호출부 in_preopen_auction 재사용).
+      ② market_status       : 네이버 장 상태가 장전 동시호가 계열(NAVER_PREOPEN_STATUSES).
+                              이 창 밖·장중(OPEN)·장마감(CLOSE)·불명이면 closePriceRaw 가
+                              예상 시가가 아니라 현재가/종가이므로 오전송 방지 위해 False.
+      ③ expected_price > 0  : 유효 양수 값.
+    셋 중 하나라도 어긋나면 조용히 보류(False) — 환각 전송 금지.
+
+    Args:
+        in_preopen_auction: 현재 시각이 평일 08:30~09:00 KST 창 안인지 여부.
+        market_status: get_naver_expected_open() 이 반환한 marketStatus(대소문자 무관).
+        expected_price: 네이버 예상체결가(원). None/0/음수면 무효.
+    """
+    if not in_preopen_auction:
+        return False
+    status = (market_status or "").strip().upper()
+    if status not in NAVER_PREOPEN_STATUSES:
+        return False
+    try:
+        return float(expected_price) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _run_naver_auction_fallback(no_telegram, now_kst, today_kst_str):
+    """KIS 경로가 막혔을 때(토큰 실패·시세 조회 실패) 네이버 예상체결가로 최후 전송 시도.
+
+    기존 전송 게이트 계약을 유지한다:
+      - 오늘 이미 보냈으면(sent_marker) 전송하지 않음(하루 1회 중복 방지).
+      - --no-telegram 이면 메시지만 출력하고 전송 생략.
+      - 네이버 값도 못 얻으면 아무것도 보내지 않고 조용히 종료(환각 금지).
+    이 경로는 auction_only 전용으로만 호출된다(호출부에서 보장).
+    """
+    if read_auction_sent_date() == today_kst_str:
+        print(f"  ℹ 오늘({today_kst_str}) 동시호가 메시지 이미 전송됨 → 네이버 폴백 전송 생략.")
+        return
+    print("\n🕗 네이버 예상체결가(장전 동시호가) 폴백 수집 중...")
+    naver = get_naver_expected_open()
+    if naver is None or naver.get("expected_price", 0) <= 0:
+        print("  ⚠ 네이버 예상체결가도 확보 실패 → 전송할 값 없음, 조용히 종료.")
+        return
+    # 시간창 판정은 본류와 동일 로직을 재사용: 평일 08:30~09:00 KST.
+    _kst_hm = now_kst.hour * 100 + now_kst.minute
+    in_preopen_auction = (now_kst.weekday() < 5) and (830 <= _kst_hm < 900)
+    market_status = naver.get("market_status", "")
+    # 🔴 가드: 동시호가 창 안 + 네이버 장상태가 장전 동시호가 계열 + 양수일 때만 전송.
+    #   그 밖(창 밖·장중 OPEN·장마감 CLOSE·상태 불명)에선 closePriceRaw 가 예상 시가가
+    #   아니라 실제 시가/현재가/종가이므로 '예상 시가' 오전송을 막고 조용히 종료.
+    #   (지연된 백업 실행이 09:00 이후 발동해도 여기서 걸러진다 — KIS in_preopen 계약과 대칭.)
+    if not should_send_naver_fallback(in_preopen_auction, market_status, naver["expected_price"]):
+        print(
+            f"  ⚠ 네이버 폴백 전송 보류(창밖/장상태={market_status or '불명'}) "
+            f"→ 예상 시가 오전송 방지, 조용히 종료."
+        )
+        return
+    date_header = f"{now_kst.year}년 {now_kst.month}월 {now_kst.day}일"
+    msg = build_naver_auction_message(date_header, naver)
+    print(
+        f"  네이버 예상 시가: {naver['expected_price']:,.0f}원 "
+        f"(전일대비 {naver['prdy_ctrt']:+.2f}% · 장상태 {naver.get('market_status', '')})"
+    )
+    print(f"\n[텔레그램 전송 메시지 내용]\n{msg}\n")
+    if no_telegram:
+        print("  ℹ --no-telegram → 네이버 폴백 전송 생략.")
+        return
+    if send_telegram_message(msg):
+        # us_date 는 KIS 없이 확정 불가 → 갱신하지 않고 auction_date 만 기록(하루 1회 중복 방지 유지).
+        #   last_us_date 를 갱신하지 않으므로 다음 실행에서 미국 새 세션 판정이 보수적으로 나올 수
+        #   있으나, 폴백은 KIS 미확보 예외 경로라 의도적으로 last_us 를 건드리지 않는다.
+        write_auction_sent_today(today_kst_str)
+        # 정확도 로그 append(네이버 소스).
+        #   predicted=5원 반올림 발송값, prev_close=예상시가-전일대비.
+        _naver_price = naver["expected_price"]
+        _naver_pred = int(round(_naver_price / 5) * 5)
+        _naver_prev = _naver_price - naver.get("prdy_vrss", 0.0)
+        append_accuracy_row(
+            today_kst_str,
+            "naver",
+            _naver_pred,
+            _naver_prev if _naver_prev > 0 else "",
+            note="네이버 예상체결가 폴백",
+        )
+
+
+# ===========================================================================
+# 아침 예상 시가 정확도 실측 로거 (additive · best-effort).
+#   목표: 매 평일 아침 발송한 '예상 시가'(antc/폴백모델/네이버)와 '실제 09:00 시가'를
+#         누적 기록해 경로별 실측 정확도를 쌓는다.
+#   2단계 기록:
+#     (append)   아침 발송 확정 시 오늘 행 추가(actual 계열은 빈칸, 하루 1행).
+#     (backfill) 실행 시작 시 actual_open 이 빈 과거 행을 찾아 실제 시가를 채우고 오차 계산.
+#   ★ 로깅은 발송을 절대 방해하지 않는다 — 모든 진입점을 try/except 로 감싸 실패는 경고만.
+#   비밀·캐시가 아니라 '이력 데이터'라 accuracy_log.csv 만 레포에 추적(.gitignore 대상 아님).
+# ===========================================================================
+
+ACCURACY_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accuracy_log.csv")
+ACCURACY_LOG_COLUMNS = [
+    "date",  # 발송 KST 날짜(YYYY-MM-DD)
+    "weekday",  # 요일(Mon..Sun)
+    "source",  # 예상 시가 출처: antc / fallback_model / naver
+    "predicted_open",  # 그날 발송된 예상 시가(원)
+    "prev_close",  # 전일 ETF 종가(원)
+    "actual_open",  # 실제 09:00 시가(원) — 다음 실행에서 백필
+    "err_won",  # 예측-실제(원)
+    "err_pct",  # 오차율(%) = err_won/actual*100
+    "dir_hit",  # 전일종가 대비 방향 일치(1/0)
+    "note",  # 비고
+]
+
+# 네이버 일별 시세(euc-kr JS 배열 리터럴) 엔드포인트.
+#   응답 = [[header...],[YYYYMMDD, open, high, low, close, volume, foreign], ...] (최신이 뒤).
+#   컬럼 인덱스 1 = 시가(open). startTime/endTime 이 있어야 데이터가 채워진다(없으면 헤더만).
+NAVER_DAILY_URL = (
+    "https://api.finance.naver.com/siseJson.naver"
+    "?symbol={code}&requestType=1&startTime={start}&endTime={end}&timeframe=day"
+)
+
+
+def compute_accuracy(predicted_open, prev_close, actual_open):
+    """예측 시가·전일종가·실제 시가로 (err_won, err_pct, dir_hit) 계산(순수 함수).
+
+    - err_won = predicted - actual (원, 반올림 정수)
+    - err_pct = err_won / actual * 100 (소수 3자리; actual<=0 이면 None)
+    - dir_hit = 전일종가 대비 방향 일치 여부(1/0). 예측·실제가 같은 방향(상승/하락/보합)이면 1.
+                prev_close 를 알 수 없으면(<=0/None) None.
+    유효하지 않은 입력(예측·실제 무효)이면 (None, None, None).
+    """
+    try:
+        pred = float(predicted_open)
+        act = float(actual_open)
+    except (TypeError, ValueError):
+        return None, None, None
+    if pred <= 0 or act <= 0:
+        return None, None, None
+    err_won = int(round(pred - act))
+    err_pct = round((pred - act) / act * 100, 3)
+
+    dir_hit = None
+    try:
+        prev = float(prev_close)
+    except (TypeError, ValueError):
+        prev = 0.0
+    if prev > 0:
+        pred_dir = (pred > prev) - (pred < prev)  # 1/0/-1
+        act_dir = (act > prev) - (act < prev)
+        dir_hit = 1 if pred_dir == act_dir else 0
+    return err_won, err_pct, dir_hit
+
+
+def parse_naver_daily(text):
+    """네이버 siseJson 응답(문자열)을 {YYYYMMDD: open_price(float)} 로 파싱(순수 함수).
+
+    응답은 작은따옴표 JS 배열 리터럴이라 ast.literal_eval 로 안전 파싱한다.
+    첫 행(header)은 건너뛰고, 각 데이터행의 [0]=날짜(int/str), [1]=시가.
+    파싱 실패·빈 응답이면 빈 dict.
+    """
+    out = {}
+    if not text:
+        return out
+    try:
+        rows = ast.literal_eval(text.strip())
+    except (ValueError, SyntaxError):
+        return out
+    if not isinstance(rows, list):
+        return out
+    for row in rows[1:]:  # [0]=헤더
+        try:
+            ymd = str(row[0]).strip()
+            open_px = float(row[1])
+        except (IndexError, TypeError, ValueError):
+            continue
+        if len(ymd) == 8 and open_px > 0:
+            out[ymd] = open_px
+    return out
+
+
+def is_backfill_target(row, today_kst_str):
+    """행이 백필 대상인지 판정(순수 함수). actual_open 이 비어 있고 날짜가 오늘보다 과거이면 True.
+
+    Args:
+        row: accuracy_log 의 dict 행(date·actual_open 키).
+        today_kst_str: 오늘 KST 날짜(YYYY-MM-DD).
+    """
+    actual = (row.get("actual_open") or "").strip()
+    date_str = row.get("date") or ""
+    return (not actual) and (date_str < today_kst_str)
+
+
+def read_accuracy_log():
+    """accuracy_log.csv 를 dict 행 리스트로 읽는다. 없으면 빈 리스트. 실패해도 예외 없이 []."""
+    try:
+        if not os.path.exists(ACCURACY_LOG_FILE):
+            return []
+        with open(ACCURACY_LOG_FILE, "r", encoding="utf-8", newline="") as f:
+            return list(csv.DictReader(f))
+    except Exception as e:
+        print(f"  ⚠ 정확도 로그 읽기 실패(로깅만 영향): {e}")
+        return []
+
+
+def write_accuracy_log(rows):
+    """dict 행 리스트를 accuracy_log.csv 로 (헤더 포함) 덮어쓴다. best-effort."""
+    try:
+        with open(ACCURACY_LOG_FILE, "w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=ACCURACY_LOG_COLUMNS)
+            w.writeheader()
+            for r in rows:
+                w.writerow({c: r.get(c, "") for c in ACCURACY_LOG_COLUMNS})
+        return True
+    except Exception as e:
+        print(f"  ⚠ 정확도 로그 쓰기 실패(로깅만 영향): {e}")
+        return False
+
+
+def ensure_accuracy_log_header():
+    """로그 파일이 없으면 헤더만 있는 빈 CSV 를 생성한다(레포 추적 시작점). best-effort."""
+    if not os.path.exists(ACCURACY_LOG_FILE):
+        write_accuracy_log([])
+
+
+def append_accuracy_row(date_str, source, predicted_open, prev_close, note=""):
+    """오늘 발송분을 로그에 append(actual 계열 빈칸). 하루 1행 — 오늘 행 있으면 중복 append 금지.
+
+    best-effort: 어떤 예외가 나도 삼키고 경고만 낸다(발송 흐름을 막지 않음).
+    """
+    try:
+        rows = read_accuracy_log()
+        if any(r.get("date") == date_str for r in rows):
+            print(f"  ℹ 정확도 로그: 오늘({date_str}) 행 이미 존재 → append 생략(하루 1행).")
+            return
+        try:
+            wd = datetime.datetime.strptime(date_str, "%Y-%m-%d").strftime("%a")
+        except ValueError:
+            wd = ""
+        rows.append(
+            {
+                "date": date_str,
+                "weekday": wd,
+                "source": source,
+                "predicted_open": int(round(float(predicted_open))),
+                "prev_close": int(round(float(prev_close))) if prev_close else "",
+                "actual_open": "",
+                "err_won": "",
+                "err_pct": "",
+                "dir_hit": "",
+                "note": note,
+            }
+        )
+        if write_accuracy_log(rows):
+            _pred_int = int(round(float(predicted_open)))
+            print(f"  🧾 정확도 로그 append: {date_str} · {source} · 예상 {_pred_int:,}원")
+    except Exception as e:
+        print(f"  ⚠ 정확도 로그 append 실패(로깅만 영향, 발송엔 무관): {e}")
+
+
+def _naver_daily_opens_for(code, dates):
+    """백필 대상 날짜들(YYYY-MM-DD 리스트)을 커버하는 네이버 일별 시가 dict {YYYY-MM-DD: open} 조회.
+
+    dates 의 최소~최대 날짜에 여유(±5일)를 둔 범위를 한 번에 요청해 파싱한다.
+    네트워크/파싱 실패 시 빈 dict(그 행들은 다음 기회에 재시도).
+    """
+    ymds = sorted(d.replace("-", "") for d in dates)
+    if not ymds:
+        return {}
+    try:
+        lo = datetime.datetime.strptime(ymds[0], "%Y%m%d") - datetime.timedelta(days=5)
+        hi = datetime.datetime.strptime(ymds[-1], "%Y%m%d") + datetime.timedelta(days=5)
+        url = NAVER_DAILY_URL.format(
+            code=code, start=lo.strftime("%Y%m%d"), end=hi.strftime("%Y%m%d")
+        )
+        res = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"},
+            timeout=10,
+        )
+        res.encoding = "euc-kr"
+        parsed = parse_naver_daily(res.text)  # {YYYYMMDD: open}
+    except Exception as e:
+        print(f"  ⚠ 네이버 일별 시가 조회 실패(백필 보류): {type(e).__name__}: {e}")
+        return {}
+    # YYYYMMDD → YYYY-MM-DD 로 키 변환
+    return {f"{k[:4]}-{k[4:6]}-{k[6:8]}": v for k, v in parsed.items()}
+
+
+def get_kis_daily_open(token, yyyymmdd):
+    """KIS ETF 국내주식 일별시세(FHKST03010100)에서 해당일(YYYYMMDD) 시가(원) 조회. 실패 시 None.
+
+    토큰이 있을 때만 시도(실제 시가의 우선 소스). 네트워크·응답 실패는 조용히 None 반환.
+    """
+    if not token:
+        return None
+    try:
+        headers = {
+            "authorization": f"Bearer {token}",
+            "appkey": APP_KEY,
+            "appsecret": APP_SECRET,
+            "tr_id": "FHKST03010100",
+        }
+        res = requests.get(
+            f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            headers=headers,
+            params={
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": ETF_CODE,
+                "FID_INPUT_DATE_1": yyyymmdd,
+                "FID_INPUT_DATE_2": yyyymmdd,
+                "FID_PERIOD_DIV_CODE": "D",
+                "FID_ORG_ADJ_PRC": "0",
+            },
+            timeout=10,
+        )
+        data = res.json()
+        if data.get("rt_cd") != "0":
+            return None
+        for row in data.get("output2", []) or []:
+            if (row.get("stck_bsop_date") or "").strip() == yyyymmdd:
+                op = safe_float(row.get("stck_oprc"))
+                return op if op > 0 else None
+    except Exception:
+        return None
+    return None
+
+
+def backfill_accuracy_log(token=None, today_kst_str=None):
+    """actual_open 이 빈 과거 행(오늘 이전)을 찾아 실제 09:00 시가를 채우고 오차를 계산·갱신한다.
+
+    실제 시가 소스: ① KIS 일별(토큰 있을 때) → ② 네이버 일별. 둘 다 실패면 빈칸 유지.
+    best-effort: 전체를 try/except 로 감싸 어떤 예외도 발송을 막지 않는다.
+    반환: 실제로 채운 행 수(테스트·로그용).
+    """
+    try:
+        rows = read_accuracy_log()
+        if not rows:
+            return 0
+        if today_kst_str is None:
+            kst = datetime.timezone(datetime.timedelta(hours=9))
+            today_kst_str = datetime.datetime.now(kst).strftime("%Y-%m-%d")
+
+        # 백필 대상: actual_open 이 비어 있고, 날짜가 오늘보다 과거인 행.
+        pending = [r for r in rows if is_backfill_target(r, today_kst_str)]
+        if not pending:
+            return 0
+
+        target_dates = sorted({r["date"] for r in pending})
+        print(f"  🔎 정확도 로그 백필 대상 {len(pending)}행: {', '.join(target_dates)}")
+
+        # 네이버 일별 시가를 대상 범위 한 번에 조회(폴백 소스, 대량 조회 효율적).
+        naver_opens = _naver_daily_opens_for(ETF_CODE, target_dates)
+
+        filled = 0
+        for r in pending:
+            date_str = r.get("date") or ""
+            ymd = date_str.replace("-", "")
+            actual = get_kis_daily_open(token, ymd)  # KIS 우선(토큰 있을 때)
+            if actual is None:
+                actual = naver_opens.get(date_str)  # 네이버 폴백
+            if actual is None or actual <= 0:
+                continue  # 이번엔 못 채움 → 빈칸 유지, 다음 실행에서 재시도
+            err_won, err_pct, dir_hit = compute_accuracy(
+                r.get("predicted_open"), r.get("prev_close"), actual
+            )
+            r["actual_open"] = int(round(actual))
+            r["err_won"] = "" if err_won is None else err_won
+            r["err_pct"] = "" if err_pct is None else err_pct
+            r["dir_hit"] = "" if dir_hit is None else dir_hit
+            filled += 1
+            _dir_txt = "적중" if dir_hit == 1 else "빗나감" if dir_hit == 0 else "N/A"
+            _err_txt = "N/A" if err_won is None else f"{err_won:+}원 · {err_pct:+.2f}%"
+            print(
+                f"  🧾 백필: {date_str} 실제시가 {int(round(actual)):,}원 "
+                f"(오차 {_err_txt} · 방향 {_dir_txt})"
+            )
+
+        if filled:
+            write_accuracy_log(rows)
+        return filled
+    except Exception as e:
+        print(f"  ⚠ 정확도 로그 백필 실패(로깅만 영향, 발송엔 무관): {e}")
+        return 0
+
+
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="TIGER 미국우주테크 ETF 시뮬레이터 (KIS API 단독)")
-    parser.add_argument("--mode", choices=["auto", "live", "after"], default="auto",
-                        help="예측 모드 (auto: 한국 장중/장후 자동판정, live: KIS iNAV 직접 사용, after: 미국가×고정비중 익영업일 예측)")
+    parser.add_argument(
+        "--mode",
+        choices=["auto", "live", "after"],
+        default="auto",
+        help="예측 모드 (auto: 한국 장중/장후 자동판정, live: KIS iNAV 직접 사용, after: 미국가×고정비중 익영업일 예측)",
+    )
     parser.add_argument("--force", action="store_true", help="미국 휴장 시 강제 실행")
     parser.add_argument("--no-telegram", action="store_true", help="텔레그램 메시지 전송 생략")
-    parser.add_argument("--auction-only", action="store_true",
-                        help="장전 동시호가 예상체결가(antc_cnpr)가 유효할 때만 하루 1회 전송(GitHub 다회 예약용). "
-                             "창 밖이거나 이미 보냈으면 전송하지 않고 조용히 종료.")
-    parser.add_argument("--send-at", default="0830",
-                        help="auction-only 시 목표 전송시각(HHMM, KST, 기본 0830). 이 시각 이전에 깨어난 평일 실행은 "
-                             "목표시각까지 대기했다가 전송 → 평소 08:30 정각 도착.")
-    parser.add_argument("--no-kakao", action="store_true", help=argparse.SUPPRESS) # 하위 호환용 숨김 옵션
+    parser.add_argument(
+        "--auction-only",
+        action="store_true",
+        help="장전 동시호가 예상체결가(antc_cnpr)가 유효할 때만 하루 1회 전송(GitHub 다회 예약용). "
+        "창 밖이거나 이미 보냈으면 전송하지 않고 조용히 종료.",
+    )
+    parser.add_argument(
+        "--send-at",
+        default="0830",
+        help="auction-only 시 목표 전송시각(HHMM, KST, 기본 0830). 이 시각 이전에 깨어난 평일 실행은 "
+        "목표시각까지 대기했다가 전송 → 평소 08:30 정각 도착.",
+    )
+    parser.add_argument(
+        "--no-kakao", action="store_true", help=argparse.SUPPRESS
+    )  # 하위 호환용 숨김 옵션
     parser.add_argument("--d0", help="비교 시작일 (YYYY-MM-DD)")
     parser.add_argument("--d1", help="비교 종료일 (YYYY-MM-DD)")
-    parser.add_argument("--fx-to", type=float,
-                        help="현재 USD/KRW 환율 수동 지정. 미지정 시 KIS price-detail t_rate 자동 사용")
-    parser.add_argument("--fx-from", type=float,
-                        help="기준일 USD/KRW 환율 수동 지정. 미지정 시 일별 캐시(fx_cache.json)의 기준일 값 사용")
+    parser.add_argument(
+        "--fx-to",
+        type=float,
+        help="현재 USD/KRW 환율 수동 지정. 미지정 시 KIS price-detail t_rate 자동 사용",
+    )
+    parser.add_argument(
+        "--fx-from",
+        type=float,
+        help="기준일 USD/KRW 환율 수동 지정. 미지정 시 일별 캐시(fx_cache.json)의 기준일 값 사용",
+    )
 
     # support running via run_simulator.bat which doesn't pass args, handle unknown args
     args, unknown = parser.parse_known_args()
 
     force_execution = args.force or "--force" in sys.argv
-    no_telegram = args.no_telegram or args.no_kakao or "--no-telegram" in sys.argv or "--no-kakao" in sys.argv
+    no_telegram = (
+        args.no_telegram or args.no_kakao or "--no-telegram" in sys.argv or "--no-kakao" in sys.argv
+    )
     auction_only = args.auction_only or "--auction-only" in sys.argv
 
     # 모드 자동 판정: 한국 정규장(09:00~15:30 KST)이면 live(iNAV 직접), 그 외엔 after(익영업일 예측)
@@ -834,7 +1438,9 @@ def main():
 
     # 동시호가 1회-전송 모드: 오늘 이미 보냈으면 불필요한 KIS API 호출 없이 즉시 종료.
     if auction_only and read_auction_sent_date() == today_kst_str:
-        print(f"  ℹ 오늘({today_kst_str}) 동시호가 예상 시가 메시지는 이미 전송됨 → 이번 예약 실행 스킵.")
+        print(
+            f"  ℹ 오늘({today_kst_str}) 동시호가 예상 시가 메시지는 이미 전송됨 → 이번 예약 실행 스킵."
+        )
         return
 
     # 08:30 정각 전송: GitHub 가 08:30 이전에 깨워 줬으면 08:30:00 까지 대기했다가 진행(antc 도 그때 신선하게 수집).
@@ -854,10 +1460,34 @@ def main():
     else:
         mode = args.mode
 
-    mode_label = "장중(KIS iNAV 직접)" if mode == "live" else "장후/새벽(미국가×고정비중 익영업일 예측)"
+    mode_label = (
+        "장중(KIS iNAV 직접)" if mode == "live" else "장후/새벽(미국가×고정비중 익영업일 예측)"
+    )
     print(f"\n🚀 TIGER 미국우주테크 ETF 시뮬레이터 — KIS API 단독 (모드: {mode_label})\n")
 
-    token = get_token()
+    # KIS 토큰 발급. auction_only 모드에선 실패해도 크래시 없이 네이버 폴백으로 흘러야 하므로
+    #   ① 전송창 마감(08:44 KST)까지 재시도를 지속하고(일시적 KIS 끊김 회복),
+    #   ② 그래도 실패하면 예외를 삼키고 네이버 예상체결가 폴백 경로로 넘어간다.
+    #   일반 모드는 기존대로(실패 시 예외로 종료) 정확도 로직에 영향 주지 않는다.
+    if auction_only:
+        try:
+            # deadline_hm=844: 전송창 마감(08:44 KST)까지 토큰 재시도.
+            #   send-at 기본 830 + 폴링 데드라인 838 이후 여유 몇 분을 둔 값으로,
+            #   send-at 을 바꾸면 이 관계(발송 목표 < 폴링 데드라인 < 토큰 마감)를 함께 조정할 것.
+            token = get_token(deadline_hm=844)
+        except Exception as e:
+            print(f"  ⚠ KIS 토큰 발급 실패({type(e).__name__}) → 네이버 예상체결가 폴백 시도")
+            # 정확도 로그: 헤더 보장 + 과거 빈 행 백필(토큰 없으니 네이버 소스). best-effort.
+            ensure_accuracy_log_header()
+            backfill_accuracy_log(token=None, today_kst_str=today_kst_str)
+            _run_naver_auction_fallback(no_telegram, now_kst, today_kst_str)
+            return
+        # 정확도 로그: 헤더 보장 + 과거 빈 행 백필(KIS 우선, 실패 시 네이버). best-effort.
+        #   실행 시작 단계에서 1회 — 발송 흐름과 독립(예외는 함수 내부에서 삼킴).
+        ensure_accuracy_log_header()
+        backfill_accuracy_log(token=token, today_kst_str=today_kst_str)
+    else:
+        token = get_token()
 
     # 미국 기준 영업일(d0, d1) 확정 — 휴장/상태 판정과 예측에 모두 사용(이른 단계에서 1회만).
     if args.d0 and args.d1:
@@ -872,7 +1502,9 @@ def main():
     # (b) 오늘이 한국 증시 개장일인가 — 휴장 안내용(정규장 진행 여부와 무관).
     kr_trading_day = us_new_session = True
     if auction_only:
-        kr_trading_day = get_kr_market_open(token, today_kst_str.replace("-", "")) is not False  # None(조회실패)=개장 간주
+        kr_trading_day = (
+            get_kr_market_open(token, today_kst_str.replace("-", "")) is not False
+        )  # None(조회실패)=개장 간주
         last_us = read_last_us_date()
         us_new_session = (last_us is None) or (d1 != last_us)
         if (not kr_trading_day) or (not us_new_session):
@@ -891,35 +1523,47 @@ def main():
     print("\n📈 ETF iNAV·괴리율 수집 중 (KIS)...")
     etf = get_etf_nav(token)
     if etf is None:
-        print("  ❌ KIS ETF iNAV 데이터를 불러올 수 없습니다. 종료합니다.")
+        print("  ❌ KIS ETF iNAV 데이터를 불러올 수 없습니다.")
+        if auction_only:
+            # 토큰은 얻었으나 KIS 시세 조회가 막힌 경우도 네이버 폴백으로 예상 시가 확보 시도.
+            print("  → 네이버 예상체결가 폴백 시도")
+            _run_naver_auction_fallback(no_telegram, now_kst, today_kst_str)
         return
 
-    inav = etf["nav"]                  # 실시간 추정 iNAV
+    inav = etf["nav"]  # 실시간 추정 iNAV
     prdy_last_nav = etf["prdy_last_nav"]  # 전일 확정 NAV (base_nav)
-    etf_current = etf["current"]       # ETF 현재가
-    etf_prev = etf["prev"]             # ETF 전일 종가
-    kis_dprt = etf["dprt"]             # KIS 괴리율(%)
+    etf_current = etf["current"]  # ETF 현재가
+    etf_prev = etf["prev"]  # ETF 전일 종가
+    kis_dprt = etf["dprt"]  # KIS 괴리율(%)
 
-    print(f"  KIS 실시간 iNAV   : {inav:>9,.2f}원 / 현재가: {etf_current:>6,.0f}원 / 전일종가: {etf_prev:>6,.0f}원")
+    print(
+        f"  KIS 실시간 iNAV   : {inav:>9,.2f}원 / 현재가: {etf_current:>6,.0f}원 / 전일종가: {etf_prev:>6,.0f}원"
+    )
     print(f"  KIS 전일확정 NAV  : {prdy_last_nav:>9,.2f}원 (base_nav)")
-    print(f"  KIS 괴리율/추적오차: {kis_dprt:>+.2f}% / {etf['trc_errt']:.2f}% | 순자산총액: {etf['etf_ntas_ttam']:,.0f}억")
+    print(
+        f"  KIS 괴리율/추적오차: {kis_dprt:>+.2f}% / {etf['trc_errt']:.2f}% | 순자산총액: {etf['etf_ntas_ttam']:,.0f}억"
+    )
 
     # 1-b. 개장/현재 괴리율 실측 + 일별 캐시 누적 (개장 할인율 추정 근거)
     print("\n📉 ETF 개장/현재 괴리율 수집 중 (KIS NAV 추이)...")
     time.sleep(0.2)
-    measured_open_dprt = None   # 당일 실측 개장 괴리율(%)
+    measured_open_dprt = None  # 당일 실측 개장 괴리율(%)
     onav = get_etf_open_nav(token)
     if onav is not None:
         op, onv = onav["open_price"], onav["oprc_nav"]
         cp, cnv = onav["cur_price"], onav["cur_nav"]
         if op > 0 and onv > 0:
             measured_open_dprt = (op - onv) / onv * 100
-            print(f"  당일 시가/개장NAV  : {op:>6,.0f}원 / {onv:>9,.2f}원 → 개장 괴리율 {measured_open_dprt:>+.2f}%")
+            print(
+                f"  당일 시가/개장NAV  : {op:>6,.0f}원 / {onv:>9,.2f}원 → 개장 괴리율 {measured_open_dprt:>+.2f}%"
+            )
         else:
             print("  당일 개장가/개장NAV 미생성(장 시작 전) → 개장 괴리율 미측정")
         measured_close_dprt = (cp - cnv) / cnv * 100 if (cp > 0 and cnv > 0) else None
         if measured_close_dprt is not None:
-            print(f"  당일 현재가/현재NAV: {cp:>6,.0f}원 / {cnv:>9,.2f}원 → 현재 괴리율 {measured_close_dprt:>+.2f}%")
+            print(
+                f"  당일 현재가/현재NAV: {cp:>6,.0f}원 / {cnv:>9,.2f}원 → 현재 괴리율 {measured_close_dprt:>+.2f}%"
+            )
         # 측정값 일별 캐시 누적(개장 할인율 추정 시계열 축적)
         save_dprt_today(open_dprt=measured_open_dprt, close_dprt=measured_close_dprt)
     else:
@@ -936,7 +1580,7 @@ def main():
     #   KIS 가 아직 예상체결가를 0으로 내려줄 수 있으므로 창 안에서 재시도해 유효값을 확보한다.
     print("\n🕗 KIS 예상체결가(antc_cnpr·장전 동시호가) 수집 중...")
     time.sleep(0.2)
-    expected_open = None        # 유효한 예상 시가(원). 무효/조회실패면 None
+    expected_open = None  # 유효한 예상 시가(원). 무효/조회실패면 None
     auction_primary_attempted = False  # 동시호가 창 안에서 폴링까지 수행한 '정시 주 실행' 플래그
     kst_tz_antc = datetime.timezone(datetime.timedelta(hours=9))
     now_kst = datetime.datetime.now(kst_tz_antc)
@@ -976,11 +1620,17 @@ def main():
         antc_vol = antc["antc_vol"]
         if in_preopen_auction and antc_cnpr > 0:
             expected_open = antc_cnpr
-            print(f"  예상체결가(antc_cnpr): {antc_cnpr:>8,.0f}원  "
-                  f"(전일대비 {antc['antc_cntg_prdy_ctrt']:+.2f}% · 예상거래량 {antc_vol:,.0f}주 · "
-                  f"장운영코드 {antc['antc_mkop_cls_code']})")
+            print(
+                f"  예상체결가(antc_cnpr): {antc_cnpr:>8,.0f}원  "
+                f"(전일대비 {antc['antc_cntg_prdy_ctrt']:+.2f}% · 예상거래량 {antc_vol:,.0f}주 · "
+                f"장운영코드 {antc['antc_mkop_cls_code']})"
+            )
         else:
-            reason = "동시호가 시간(평일 08:30~09:00) 아님" if not in_preopen_auction else "antc_cnpr 빈값"
+            reason = (
+                "동시호가 시간(평일 08:30~09:00) 아님"
+                if not in_preopen_auction
+                else "antc_cnpr 빈값"
+            )
             print(f"  예상체결가 무효({reason}) → 폴백 사용")
     else:
         print("  ⚠ KIS 예상체결가 조회 실패/빈값 → 폴백 사용")
@@ -990,8 +1640,12 @@ def main():
     # 미국 장 휴일 체크 (KST 어제 날짜와 최근 영업일 d1을 비교) — 장후 모드에서만 의미 있음
     yesterday_kst = (now_kst - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
     if mode == "after" and not force_execution and d1 != yesterday_kst:
-        print(f"  🛑 미국 장 휴장 감지 (한국기준 어제 날짜: {yesterday_kst} / 미국 최근 거래일: {d1})")
-        print("  텔레그램 메시지 전송을 생략하고 종료합니다. (강제 실행을 원하시면 --force 인자를 붙여 실행하세요.)")
+        print(
+            f"  🛑 미국 장 휴장 감지 (한국기준 어제 날짜: {yesterday_kst} / 미국 최근 거래일: {d1})"
+        )
+        print(
+            "  텔레그램 메시지 전송을 생략하고 종료합니다. (강제 실행을 원하시면 --force 인자를 붙여 실행하세요.)"
+        )
         return
 
     # 3. 고정 비중 선택 (SPCX 편입 시차 보정: 6/17 이전엔 SPCX 0% 재정규화)
@@ -1007,7 +1661,7 @@ def main():
     print(f"  ✅ 고정 비중 적용 ({sum(1 for w in active_holdings.values() if w > 0)}개 종목):")
     for t, w in sorted(active_holdings.items(), key=lambda x: x[1], reverse=True):
         if w > 0:
-            print(f"    - {t:<6}: {w*100:>5.2f}% (고정 비중)")
+            print(f"    - {t:<6}: {w * 100:>5.2f}% (고정 비중)")
 
     HOLDINGS = active_holdings
     EXCD_MAP = active_excd_map
@@ -1038,7 +1692,9 @@ def main():
             excd = active_excd_map.get(ticker, "US")
             if p_from is not None and p_to is not None:
                 ret = (p_to - p_from) / p_from * 100
-                print(f"  {ticker:<6}  [{excd}]  {d0} {p_from:>9.2f}  →  {d1} {p_to:>9.2f}  ({ret:>+6.2f}%)")
+                print(
+                    f"  {ticker:<6}  [{excd}]  {d0} {p_from:>9.2f}  →  {d1} {p_to:>9.2f}  ({ret:>+6.2f}%)"
+                )
                 stock_returns[ticker] = ret
                 latest_prices[ticker] = p_to
                 confirmed.append(ticker)
@@ -1064,7 +1720,9 @@ def main():
 
             if p_from is not None and p_to is not None:
                 ret = (p_to - p_from) / p_from * 100
-                print(f"  {ticker:<6}  [{excd}]  {d0} {p_from:>9.2f}  →  현재 {p_to:>9.2f}  ({ret:>+6.2f}%)")
+                print(
+                    f"  {ticker:<6}  [{excd}]  {d0} {p_from:>9.2f}  →  현재 {p_to:>9.2f}  ({ret:>+6.2f}%)"
+                )
                 stock_returns[ticker] = ret
                 latest_prices[ticker] = p_to
                 confirmed.append(ticker)
@@ -1114,7 +1772,9 @@ def main():
             fx_change = (fx_to / base_fx - 1) * 100
             print(f"  USD/KRW {base_fx:.2f}(기준일 캐시) → {fx_to:.2f}(현재)  ({fx_change:+.2f}%)")
         else:
-            print(f"  현재 USD/KRW {fx_to:.2f} · 기준 환율 없음 → 변동 0% 처리 (다음 실행부터 캐시 누적)")
+            print(
+                f"  현재 USD/KRW {fx_to:.2f} · 기준 환율 없음 → 변동 0% 처리 (다음 실행부터 캐시 누적)"
+            )
 
     # 6. 예측 계산
     weighted_stock_return = sum(stock_returns[t] * active_holdings[t] for t in confirmed)
@@ -1151,7 +1811,7 @@ def main():
     print(f"\n  종목 가중 수익률   : {weighted_stock_return:>+.2f}%")
     print(f"  환율 수익률        : {fx_change:>+.2f}%")
     print(f"  합산 예측 수익률   : {total_return_pct:>+.2f}%")
-    
+
     print("-" * 50)
     print(f"  [📊 {target_date_str} 시뮬레이션 결과]")
     print(f"  기준 ETF NAV       : {base_nav:>8,.0f}원")
@@ -1177,7 +1837,7 @@ def main():
     else:
         print(f"  실제 ETF 현재가    : 미공시 (장후 예측 또는 업데이트 지연)")
         print(f"  오차               : N/A")
-        
+
     # 개장 시가 예측.
     #   ★ 메인: KIS 예상체결가(antc_cnpr) — 장전 동시호가(8:30~09:00) 동안 시장이 만든 예상 시가.
     #     공정가치(예측 NAV)는 펀더멘털 모델 그대로 두고, 예상 괴리율 = (예상시가-예측NAV)/예측NAV.
@@ -1192,7 +1852,9 @@ def main():
         open_nav_track = expected_open
         predicted_open = int(round(expected_open / 5) * 5)
         # 예상 괴리율 = (예상시가 − 예측NAV)/예측NAV × 100 (저평가=할인, 고평가=프리미엄)
-        open_discount = (expected_open - predicted_nav) / predicted_nav * 100 if predicted_nav else 0.0
+        open_discount = (
+            (expected_open - predicted_nav) / predicted_nav * 100 if predicted_nav else 0.0
+        )
         discount_basis = "예상시가 vs 예측NAV (시장 동시호가 antc_cnpr)"
         scenario_name = "KIS 예상체결가(antc_cnpr·시장 동시호가)"
         antc_ctrt = antc["antc_cntg_prdy_ctrt"]
@@ -1201,7 +1863,9 @@ def main():
         # 장중(live)엔 '오늘'의 실측 개장괴리가 곧 정답(같은 날 시가 예측). 장후(after)엔
         # 측정된 개장괴리는 '이미 지난 오늘'의 값이므로 익영업일 예측에 직접 쓰지 않고 캐시·cold-start로만 반영.
         live_open_dprt = measured_open_dprt if mode == "live" else None
-        open_discount, discount_basis, open_vol_signal = estimate_open_discount(kis_dprt, today_open_dprt=live_open_dprt)
+        open_discount, discount_basis, open_vol_signal = estimate_open_discount(
+            kis_dprt, today_open_dprt=live_open_dprt
+        )
         open_nav_track = predicted_nav * (1 + open_discount / 100)
         predicted_open = int(round(open_nav_track / 5) * 5)
         scenario_name = "동시호가 전·외 — 시장 예상체결가 없음(참고 추정: 예측NAV × 괴리율모델)"
@@ -1268,7 +1932,9 @@ def main():
         print(f"  - 공정가치(예측 NAV)   : {predicted_nav:>8,.0f}원")
         print(f"  - 추정 개장할인율      : {open_discount:>+7.2f}%  (근거: {discount_basis})")
         print(f"  - 예상 기준가          : {open_nav_track:>8,.0f}원")
-        print(f"  - 정밀 범위            : {open_lower:>8,.0f}원 ~ {open_upper:>8,.0f}원 (±{open_band:,.0f}원)")
+        print(
+            f"  - 정밀 범위            : {open_lower:>8,.0f}원 ~ {open_upper:>8,.0f}원 (±{open_band:,.0f}원)"
+        )
 
     print("-" * 50)
     print(f"  [🎯 최종 시가 예측 요약]")
@@ -1294,7 +1960,7 @@ def main():
             ret = stock_returns.get(ticker, 0.0)
             p_to = latest_prices.get(ticker, 0.0)
             name = KOREAN_NAMES.get(ticker, ticker)
-            
+
             # 한국 투자자 직관에 맞춰 상승은 빨간 삼각(🔺), 하락은 파란 삼각(🔻)으로 표시
             if ret > 0:
                 emoji = "🔺"
@@ -1304,7 +1970,7 @@ def main():
                 emoji = "▫️"
             holdings_parts.append(f"{emoji} <b>{name}</b>: ${p_to:,.2f} ({ret:+.2f}%)")
         holdings_str = "\n".join(holdings_parts)
-        
+
         # 오늘 날짜 및 시간 계산 (KST 기준)
         kst_tz = datetime.timezone(datetime.timedelta(hours=9))
         now_kst = datetime.datetime.now(kst_tz)
@@ -1320,7 +1986,9 @@ def main():
         #   (공정가치·괴리율 '수치 줄'은 제거하고 신호는 '의견' 한 줄로. 예상 시가는 꼬리표 없이.)
         #   공정가치·괴리율 상세는 콘솔 출력에는 그대로 남는다.
         # auction-only(정상 예측)면 상단에 국내장·미국장 상태 한 줄을 붙인다(여기 왔다는 건 둘 다 정상).
-        status_header = (market_status_line(True, True, compact=True) + "\n") if auction_only else ""
+        status_header = (
+            (market_status_line(True, True, compact=True) + "\n") if auction_only else ""
+        )
         telegram_msg = (
             f"<b>[{date_header}]</b>\n"
             f"{status_header}\n"
@@ -1334,7 +2002,7 @@ def main():
             f"🇺🇸 <b>주요 종목 종가 (등락률)</b>\n"
             f"{holdings_str}"
         )
-        
+
         print(f"\n[텔레그램 전송 메시지 내용]\n{telegram_msg}\n")
         # --auction-only 전송 게이트. 하루 1회, 가능한 한 '진짜 예상체결가'로.
         #   ① 동시호가 창(08:30~09:00) + 유효 antc_cnpr → 시장 예상 시가로 전송(최우선).
@@ -1350,26 +2018,54 @@ def main():
         elif auction_only and read_auction_sent_date() == today_kst_str:
             # 전송 직전 마커 재확인(중복 방지 이중화). main() 초기 확인 이후 KIS 호출·대기 동안
             # 다른 실행이 먼저 보내 마커를 갱신했을 수 있으므로, 실제 전송 직전 한 번 더 막는다.
-            print(f"  ℹ 전송 직전 재확인 — 오늘({today_kst_str}) 동시호가 메시지 이미 전송됨 → 전송 생략.")
+            print(
+                f"  ℹ 전송 직전 재확인 — 오늘({today_kst_str}) 동시호가 메시지 이미 전송됨 → 전송 생략."
+            )
         elif auction_only:
-            _gate = decide_auction_send(expected_open_valid, auction_primary_attempted, after_auction_window)
+            _gate = decide_auction_send(
+                expected_open_valid, auction_primary_attempted, after_auction_window
+            )
             if _gate == "send_real":
                 # ① 유효 antc_cnpr — 시장 예상 시가로 전송(최우선)
                 if send_telegram_message(telegram_msg):
                     write_auction_sent_today(today_kst_str, us_date=d1)
+                    # 정확도 로그 append(antc 소스). best-effort.
+                    append_accuracy_row(today_kst_str, "antc", predicted_open, base_etf, note="")
             elif _gate == "send_fallback_primary":
                 # ② 정시 주 실행이 폴링 끝까지 antc_cnpr 못 잡은 경우 → 폴백으로 그 자리에서 전송
-                print("  ⏳ 폴링 후에도 예상체결가 미확보 → 폴백 추정으로 정시 전송(메시지 누락 방지).")
+                print(
+                    "  ⏳ 폴링 후에도 예상체결가 미확보 → 폴백 추정으로 정시 전송(메시지 누락 방지)."
+                )
                 if send_telegram_message(telegram_msg):
                     write_auction_sent_today(today_kst_str, us_date=d1)
+                    # 정확도 로그 append(폴백 모델 소스). best-effort.
+                    append_accuracy_row(
+                        today_kst_str,
+                        "fallback_model",
+                        predicted_open,
+                        base_etf,
+                        note="정시 폴백(antc 미확보)",
+                    )
             elif _gate == "send_fallback_late":
                 # ③ 뒤늦은 cron 백업 실행 — 창 닫힌 후 도착한 실행이 최후 1회 전송
-                print("  ⏳ 동시호가 창(08:30~09:00) 종료·예상체결가 못 받음 → 폴백 추정으로 최후 1회 전송(메시지 누락 방지).")
+                print(
+                    "  ⏳ 동시호가 창(08:30~09:00) 종료·예상체결가 못 받음 → 폴백 추정으로 최후 1회 전송(메시지 누락 방지)."
+                )
                 if send_telegram_message(telegram_msg):
                     write_auction_sent_today(today_kst_str, us_date=d1)
+                    # 정확도 로그 append(폴백 모델 소스·뒤늦은 백업). best-effort.
+                    append_accuracy_row(
+                        today_kst_str,
+                        "fallback_model",
+                        predicted_open,
+                        base_etf,
+                        note="뒤늦은 폴백(창 종료)",
+                    )
             else:  # 'skip'
                 # ④ 창 이전(08:30 전) 비정상 조기 실행 — wait 가 처리하므로 사실상 도달 불가
-                print("  ⏳ 동시호가 창(08:30~09:00) 이전 — 대기 후 재진행 예정(조기 실행 안전장치).")
+                print(
+                    "  ⏳ 동시호가 창(08:30~09:00) 이전 — 대기 후 재진행 예정(조기 실행 안전장치)."
+                )
         else:
             send_telegram_message(telegram_msg)
     except Exception as e:

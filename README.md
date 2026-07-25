@@ -1,4 +1,4 @@
-# etf_info — TIGER 미국우주테크 ETF 개장 예측기
+# etf-info — TIGER 미국우주테크 ETF 개장 예측기
 
 ![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
 ![Apps Script](https://img.shields.io/badge/Apps_Script-4285F4?logo=googleappsscript&logoColor=white)

@@ -13,7 +13,15 @@ import unittest
 
 # 모듈 최상단에서 환경변수·파일 접근은 있으나 네트워크 호출은 없음.
 # if __name__ == "__main__" 가드(1336번 줄)로 main() 자동 실행 없음 → import 안전.
-from tiger_etf_simulator import should_poll_auction, decide_auction_send
+from tiger_etf_simulator import (
+    should_poll_auction,
+    decide_auction_send,
+    should_send_naver_fallback,
+    build_naver_auction_message,
+    compute_accuracy,
+    parse_naver_daily,
+    is_backfill_target,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +223,245 @@ class TestShouldPollAuction(unittest.TestCase):
                 antc={"antc_cnpr": -1},
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# build_naver_auction_message — 네이버 폴백 메시지 순수 로직 검증
+#   (네트워크 없이 dict 입력만으로 반올림·범위·전일대비 부호를 확인)
+# ---------------------------------------------------------------------------
+class TestBuildNaverAuctionMessage(unittest.TestCase):
+    """네이버 예상체결가 폴백 메시지 생성 순수 함수 검증."""
+
+    def _naver(self, price, vrss, ctrt):
+        return {"expected_price": price, "prdy_vrss": vrss, "prdy_ctrt": ctrt}
+
+    def test_rounds_to_nearest_5_and_range(self):
+        """예상 시가 5원 반올림 + ±25원 범위 표기."""
+        msg = build_naver_auction_message("2026년 7월 2일", self._naver(11123, 390, 3.62))
+        # 11123 → 11125 (5원 반올림), 범위 11100~11150
+        self.assertIn("11,125원", msg)
+        self.assertIn("11,100원 ~ 11,150원", msg)
+
+    def test_rising_shows_up_arrow_and_plus(self):
+        """상승(전일대비 양수) → 🔺 + 양수 부호."""
+        msg = build_naver_auction_message("2026년 7월 2일", self._naver(11165, 390, 3.62))
+        self.assertIn("🔺", msg)
+        self.assertIn("+390원", msg)
+        self.assertIn("(+3.62%)", msg)
+
+    def test_falling_shows_down_arrow_and_negative(self):
+        """하락(전일대비 음수) → 🔻 + 음수 표기."""
+        msg = build_naver_auction_message("2026년 7월 2일", self._naver(10500, -275, -2.55))
+        self.assertIn("🔻", msg)
+        self.assertIn("-275원", msg)
+
+    def test_source_label_present(self):
+        """네이버 대체분임을 알리는 출처 한 줄 포함."""
+        msg = build_naver_auction_message("2026년 7월 2일", self._naver(11000, 0, 0.0))
+        self.assertIn("데이터: 네이버 예상체결가", msg)
+
+
+# ---------------------------------------------------------------------------
+# should_send_naver_fallback — 네이버 폴백 전송 가드(순수 함수) 검증
+#   창 안 + 장전 동시호가 상태 + 양수일 때만 전송, 그 밖은 보류.
+# ---------------------------------------------------------------------------
+class TestShouldSendNaverFallback(unittest.TestCase):
+    """네이버 예상체결가 폴백 전송 게이트를 검증한다(오전송/휴장우회 방지)."""
+
+    def test_send_when_window_and_preopen_and_positive(self):
+        """창 안 + PREOPEN + 양수 → True(정상 전송)."""
+        self.assertTrue(
+            should_send_naver_fallback(
+                in_preopen_auction=True, market_status="PREOPEN", expected_price=11165
+            )
+        )
+
+    def test_preopen_status_case_insensitive(self):
+        """상태 문자열 대소문자·공백 무관 → True."""
+        self.assertTrue(
+            should_send_naver_fallback(
+                in_preopen_auction=True, market_status="  preopen  ", expected_price=10000
+            )
+        )
+
+    def test_hold_when_outside_window(self):
+        """창 밖(in_preopen_auction=False) → 보류(False). 09:00 이후 지연 실행 차단."""
+        self.assertFalse(
+            should_send_naver_fallback(
+                in_preopen_auction=False, market_status="PREOPEN", expected_price=11165
+            )
+        )
+
+    def test_hold_when_market_open(self):
+        """장중(OPEN) → closePriceRaw 는 현재가라 예상 시가 아님 → 보류."""
+        self.assertFalse(
+            should_send_naver_fallback(
+                in_preopen_auction=True, market_status="OPEN", expected_price=11165
+            )
+        )
+
+    def test_hold_when_market_close(self):
+        """장마감(CLOSE) → closePriceRaw 는 종가 → 보류(오전송 방지)."""
+        self.assertFalse(
+            should_send_naver_fallback(
+                in_preopen_auction=True, market_status="CLOSE", expected_price=11165
+            )
+        )
+
+    def test_hold_when_status_unknown(self):
+        """상태 불명(빈 문자열/None) → 보류(환각 금지)."""
+        self.assertFalse(
+            should_send_naver_fallback(
+                in_preopen_auction=True, market_status="", expected_price=11165
+            )
+        )
+        self.assertFalse(
+            should_send_naver_fallback(
+                in_preopen_auction=True, market_status=None, expected_price=11165
+            )
+        )
+
+    def test_hold_when_price_not_positive(self):
+        """price<=0(0·음수·None·비수치) → 보류."""
+        for bad in (0, -1, None, "x"):
+            self.assertFalse(
+                should_send_naver_fallback(
+                    in_preopen_auction=True, market_status="PREOPEN", expected_price=bad
+                ),
+                msg=f"price={bad!r} 는 보류여야 함",
+            )
+
+    def test_hold_weekend_via_window_flag(self):
+        """주말은 호출부에서 in_preopen_auction=False 로 들어옴 → 보류."""
+        # 주말/평일 판정은 in_preopen_auction 계산(weekday<5)에 캡슐화되어 있으므로,
+        # 여기서는 그 결과(False)가 전달되면 상태·가격이 유효해도 보류됨을 확인한다.
+        self.assertFalse(
+            should_send_naver_fallback(
+                in_preopen_auction=False, market_status="PREOPEN", expected_price=11165
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# compute_accuracy — 예측/실제/전일종가로 오차·방향적중 계산(순수 함수)
+# ---------------------------------------------------------------------------
+class TestComputeAccuracy(unittest.TestCase):
+    """정확도 계산 순수 함수를 검증한다(네트워크·파일 무관)."""
+
+    def test_overprediction_positive_err(self):
+        """예측>실제 → err_won 양수, err_pct 양수."""
+        err_won, err_pct, dir_hit = compute_accuracy(
+            predicted_open=9280, prev_close=9060, actual_open=9200
+        )
+        self.assertEqual(err_won, 80)  # 9280-9200
+        self.assertAlmostEqual(err_pct, round(80 / 9200 * 100, 3))
+        # 전일종가 9060 대비: 예측 9280 상승, 실제 9200 상승 → 방향 일치
+        self.assertEqual(dir_hit, 1)
+
+    def test_underprediction_negative_err(self):
+        """예측<실제 → err_won 음수."""
+        err_won, err_pct, dir_hit = compute_accuracy(
+            predicted_open=9280, prev_close=9060, actual_open=9685
+        )
+        self.assertEqual(err_won, 9280 - 9685)  # -405
+        self.assertTrue(err_pct < 0)
+        # 둘 다 전일종가 위 → 방향 일치
+        self.assertEqual(dir_hit, 1)
+
+    def test_direction_miss(self):
+        """예측은 상승·실제는 하락 → dir_hit=0."""
+        _, _, dir_hit = compute_accuracy(predicted_open=10100, prev_close=10000, actual_open=9800)
+        self.assertEqual(dir_hit, 0)
+
+    def test_direction_flat_match(self):
+        """예측·실제 모두 전일종가와 동일(보합) → 방향 일치."""
+        _, _, dir_hit = compute_accuracy(predicted_open=10000, prev_close=10000, actual_open=10000)
+        self.assertEqual(dir_hit, 1)
+
+    def test_prev_close_missing_dir_none(self):
+        """전일종가 없음/0 → dir_hit=None(방향 판정 불가), 오차는 계산됨."""
+        err_won, err_pct, dir_hit = compute_accuracy(
+            predicted_open=9280, prev_close="", actual_open=9200
+        )
+        self.assertEqual(err_won, 80)
+        self.assertIsNotNone(err_pct)
+        self.assertIsNone(dir_hit)
+
+    def test_invalid_actual_returns_none(self):
+        """실제 시가 무효(0/None/비수치) → (None,None,None)."""
+        for bad in (0, None, "x", -5):
+            self.assertEqual(
+                compute_accuracy(predicted_open=9280, prev_close=9000, actual_open=bad),
+                (None, None, None),
+                msg=f"actual={bad!r}",
+            )
+
+    def test_invalid_predicted_returns_none(self):
+        """예측 시가 무효 → (None,None,None)."""
+        self.assertEqual(
+            compute_accuracy(predicted_open=None, prev_close=9000, actual_open=9200),
+            (None, None, None),
+        )
+
+
+# ---------------------------------------------------------------------------
+# parse_naver_daily — 네이버 일별 시세(JS 배열 리터럴) → {YYYYMMDD: 시가}
+# ---------------------------------------------------------------------------
+class TestParseNaverDaily(unittest.TestCase):
+    """네이버 일별 시가 파서(순수 함수) 검증 — 실제 응답 형태의 리터럴로 확인."""
+
+    # 실제 응답 형태(작은따옴표 JS 배열 리터럴, 첫 행 헤더).
+    SAMPLE = (
+        "[['날짜','시가','고가','저가','종가','거래량','외국인소진율'],\n"
+        "['20260630', 10765, 11000, 10700, 10775, 1234, 0.1],\n"
+        "['20260701', 11120, 11300, 11050, 11165, 2345, 0.2]]"
+    )
+
+    def test_parses_open_by_date(self):
+        """헤더를 건너뛰고 날짜별 시가(인덱스 1)를 뽑는다."""
+        out = parse_naver_daily(self.SAMPLE)
+        self.assertEqual(out.get("20260630"), 10765.0)
+        self.assertEqual(out.get("20260701"), 11120.0)
+        self.assertEqual(len(out), 2)  # 헤더 제외 2행
+
+    def test_empty_or_header_only(self):
+        """빈 문자열/헤더만 있는 응답 → 빈 dict."""
+        self.assertEqual(parse_naver_daily(""), {})
+        self.assertEqual(parse_naver_daily(None), {})
+        self.assertEqual(
+            parse_naver_daily("[['날짜','시가','고가','저가','종가','거래량','외국인']]"), {}
+        )
+
+    def test_malformed_returns_empty(self):
+        """파싱 불가 문자열 → 빈 dict(예외 없이)."""
+        self.assertEqual(parse_naver_daily("not-a-list"), {})
+        self.assertEqual(parse_naver_daily("<html>error</html>"), {})
+
+
+# ---------------------------------------------------------------------------
+# is_backfill_target — 백필 대상 행 판정(순수 함수)
+# ---------------------------------------------------------------------------
+class TestIsBackfillTarget(unittest.TestCase):
+    """actual_open 빈칸 + 오늘보다 과거인 행만 백필 대상."""
+
+    def test_past_row_empty_actual_is_target(self):
+        row = {"date": "2026-06-30", "actual_open": ""}
+        self.assertTrue(is_backfill_target(row, "2026-07-02"))
+
+    def test_filled_actual_not_target(self):
+        """이미 실제 시가가 채워진 행 → 대상 아님."""
+        row = {"date": "2026-06-30", "actual_open": "10765"}
+        self.assertFalse(is_backfill_target(row, "2026-07-02"))
+
+    def test_today_row_not_target(self):
+        """오늘 행(아직 실제 시가 미확정) → 대상 아님(과거만 백필)."""
+        row = {"date": "2026-07-02", "actual_open": ""}
+        self.assertFalse(is_backfill_target(row, "2026-07-02"))
+
+    def test_future_row_not_target(self):
+        """미래 날짜 행 → 대상 아님."""
+        row = {"date": "2026-07-05", "actual_open": ""}
+        self.assertFalse(is_backfill_target(row, "2026-07-02"))
 
 
 if __name__ == "__main__":

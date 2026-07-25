@@ -1,4 +1,4 @@
-// etf_info — GAS 알람: 평일 아침 GitHub 워크플로를 workflow_dispatch 로 깨운다.
+// etf-info — GAS 알람: 평일 아침 GitHub 워크플로를 workflow_dispatch 로 깨운다.
 var GH_OWNER = 'muhwa91';
 var GH_REPO = 'chiikawa_dev';
 var GH_WORKFLOW = 'etf_simulator.yml';

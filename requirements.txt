@@ -1,3 +1,3 @@
-# etf_info (TIGER ETF 시뮬레이터) 파이썬 의존성
+# etf-info (TIGER ETF 시뮬레이터) 파이썬 의존성
 # 표준 라이브러리(datetime/json/os/sys/time/unittest) 외 외부 패키지는 requests 하나.
 requests
