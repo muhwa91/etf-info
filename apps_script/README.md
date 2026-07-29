@@ -71,7 +71,7 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 
 ## 🔗 clasp 로 로컬 ↔ Apps Script 연결 (코드 푸시)
 
-`etf-info.js`(동작 중인 GAS 코드) 를 **로컬에서 고치고 곧바로 Apps Script 로 푸시**하기 위해 Google 공식 CLI
+`etf_info.js`(동작 중인 GAS 코드) 를 **로컬에서 고치고 곧바로 Apps Script 로 푸시**하기 위해 Google 공식 CLI
 [`clasp`](https://github.com/google/clasp) 를 이 폴더에 설치해 뒀다(`package.json` 의 devDependency).
 연결·로그인은 완료된 상태(`scriptId` in `.clasp.json`, `muhwa91@gmail.com`). 모든 명령은 **이 `apps_script/` 폴더에서** 실행한다.
 
@@ -93,7 +93,7 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 
 ### 주의
 - `clasp push` 는 **원격을 로컬과 똑같이 맞춘다**(로컬에 없는 서버 파일은 삭제). `.claspignore` 로
-  **`etf-info.js` + `appsscript.json` 만** 푸시되도록 화이트리스트해 둠(node_modules 사고 방지).
-- 동작 중인 서버 코드는 `clasp pull` 로 내려받아 단일 원본 `etf-info.js` 로 채택했다(예전 사본 `dispatch.gs` 는 제거 — 내용 동일).
+  **`etf_info.js` + `appsscript.json` 만** 푸시되도록 화이트리스트해 둠(node_modules 사고 방지).
+- 동작 중인 서버 코드는 `clasp pull` 로 내려받아 단일 원본 `etf_info.js` 로 채택했다(예전 사본 `dispatch.gs` 는 제거 — 내용 동일).
 - **푸시는 코드/매니페스트만 바꾼다.** 등록한 **시간 트리거·Script Properties(`GH_TOKEN`)** 는 그대로 유지된다.
 - 토큰 등 비밀은 절대 `.gs`/깃에 넣지 말 것 → Script Properties 에만.
