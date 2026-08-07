@@ -14,6 +14,7 @@ import unittest
 # 모듈 최상단에서 환경변수·파일 접근은 있으나 네트워크 호출은 없음.
 # if __name__ == "__main__" 가드(1336번 줄)로 main() 자동 실행 없음 → import 안전.
 from tiger_etf_simulator import (
+    SESSION,
     should_poll_auction,
     decide_auction_send,
     should_send_naver_fallback,
@@ -462,6 +463,42 @@ class TestIsBackfillTarget(unittest.TestCase):
         """미래 날짜 행 → 대상 아님."""
         row = {"date": "2026-07-05", "actual_open": ""}
         self.assertFalse(is_backfill_target(row, "2026-07-02"))
+
+
+# ---------------------------------------------------------------------------
+# SESSION — 전송 계층 재시도 회귀 방지 (네트워크 호출 없음)
+# ---------------------------------------------------------------------------
+class TestSessionRetry(unittest.TestCase):
+    """2026-08-07 RemoteDisconnected 로 08:30 발송 실패.
+
+    호출부의 rt_cd 재시도 루프는 '응답을 받은 뒤'만 돌아 네트워크 예외를 못 잡는다.
+    SESSION 어댑터에 전송 계층 재시도가 실제로 걸려 있는지 검증한다(누가 지우면 여기서 깨진다).
+    """
+
+    def _retries(self):
+        return [SESSION.get_adapter(u).max_retries for u in ("https://x/", "http://x/")]
+
+    def test_both_schemes_mounted(self):
+        """https·http 둘 다 재시도 어댑터가 mount 돼 있다(기본 어댑터 = total 0)."""
+        for retry in self._retries():
+            self.assertGreaterEqual(retry.total, 3)
+
+    def test_connect_and_read_retries(self):
+        """연결 끊김(connect)·응답 중단(read) 각각 재시도가 있어야 한다 — 이번 장애가 이 경로."""
+        for retry in self._retries():
+            self.assertGreaterEqual(retry.connect, 3)
+            self.assertGreaterEqual(retry.read, 3)
+
+    def test_get_retried_post_not(self):
+        """GET 만 재시도 — POST(텔레그램·토큰)는 중복 전송 위험이라 제외한다."""
+        for retry in self._retries():
+            self.assertIn("GET", retry.allowed_methods)
+            self.assertNotIn("POST", retry.allowed_methods)
+
+    def test_backoff_configured(self):
+        """즉시 3연타는 같은 장애에 그대로 당한다 → 지수 백오프가 있어야 한다."""
+        for retry in self._retries():
+            self.assertGreater(retry.backoff_factor, 0)
 
 
 if __name__ == "__main__":

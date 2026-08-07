@@ -1,4 +1,6 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import time
 import os
 import json
@@ -29,6 +31,23 @@ if (not APP_KEY or not APP_SECRET) and os.path.exists(kis_config_path):
         pass
 
 BASE_URL = "https://openapi.koreainvestment.com:9443"
+
+# 전송 계층 재시도 세션 — 2026-08-07 RemoteDisconnected('Remote end closed connection without
+# response')로 08:30 정각 발송이 통째로 실패(run 31130875885)한 뒤 도입. 호출부의 rt_cd 재시도
+# 루프는 '응답을 받은 뒤'만 돌아 연결 끊김·타임아웃 같은 네트워크 예외를 흡수하지 못한다.
+# GET 만 재시도한다 — POST(텔레그램 전송·KIS 토큰 발급)는 각자 자체 백오프가 있고 중복 전송 위험.
+_RETRY = Retry(
+    total=3,
+    connect=3,
+    read=3,
+    backoff_factor=0.5,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=frozenset(["GET"]),
+    raise_on_status=False,
+)
+SESSION = requests.Session()
+SESSION.mount("https://", HTTPAdapter(max_retries=_RETRY))
+SESSION.mount("http://", HTTPAdapter(max_retries=_RETRY))
 
 HOLDINGS = {
     "SPCX": 0.252,
@@ -341,7 +360,7 @@ def get_us_price(token, ticker, retry=3):
 
     for excd in excd_list:
         for attempt in range(retry):
-            res = requests.get(
+            res = SESSION.get(
                 f"{BASE_URL}/uapi/overseas-price/v1/quotations/price",
                 headers=headers,
                 params={"AUTH": "", "EXCD": excd, "SYMB": ticker},
@@ -395,7 +414,7 @@ def get_usdkrw(token, retry=3):
 
         for excd in excd_list:
             for attempt in range(retry):
-                res = requests.get(
+                res = SESSION.get(
                     f"{BASE_URL}/uapi/overseas-price/v1/quotations/price-detail",
                     headers=headers,
                     params={"AUTH": "", "EXCD": excd, "SYMB": ticker},
@@ -579,7 +598,7 @@ def get_etf_open_nav(token, retry=3):
         "tr_id": "FHPST02440000",
     }
     for attempt in range(retry):
-        res = requests.get(
+        res = SESSION.get(
             f"{BASE_URL}/uapi/etfetn/v1/quotations/nav-comparison-trend",
             headers=headers,
             params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ETF_CODE},
@@ -616,7 +635,7 @@ def get_kr_market_open(token, yyyymmdd):
             "tr_id": "CTCA0903R",
             "custtype": "P",
         }
-        res = requests.get(
+        res = SESSION.get(
             f"{BASE_URL}/uapi/domestic-stock/v1/quotations/chk-holiday",
             headers=headers,
             params={"BASS_DT": yyyymmdd, "CTX_AREA_NK": "", "CTX_AREA_FK": ""},
@@ -653,7 +672,7 @@ def get_etf_nav(token):
         "appsecret": APP_SECRET,
         "tr_id": "FHPST02400000",
     }
-    res = requests.get(
+    res = SESSION.get(
         f"{BASE_URL}/uapi/etfetn/v1/quotations/inquire-price",
         headers=headers,
         params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ETF_CODE},
@@ -699,7 +718,7 @@ def get_etf_expected_open(token, retry=3):
         "tr_id": "FHKST01010200",
     }
     for attempt in range(retry):
-        res = requests.get(
+        res = SESSION.get(
             f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
             headers=headers,
             params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ETF_CODE},
@@ -764,7 +783,7 @@ def get_naver_expected_open(code=ETF_CODE, retry=3):
     last_err = None
     for attempt in range(1, retry + 1):
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            res = SESSION.get(url, headers=headers, timeout=10)
             res.raise_for_status()
             data = res.json()
             rows = (data or {}).get("datas") or []
@@ -833,7 +852,7 @@ def get_us_daily(token, ticker, retry=3):
 
     for excd in excd_list:
         for attempt in range(retry):
-            res = requests.get(
+            res = SESSION.get(
                 f"{BASE_URL}/uapi/overseas-price/v1/quotations/dailyprice",
                 headers=headers,
                 params={
@@ -1269,7 +1288,7 @@ def _naver_daily_opens_for(code, dates):
         url = NAVER_DAILY_URL.format(
             code=code, start=lo.strftime("%Y%m%d"), end=hi.strftime("%Y%m%d")
         )
-        res = requests.get(
+        res = SESSION.get(
             url,
             headers={"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com/"},
             timeout=10,
@@ -1297,7 +1316,7 @@ def get_kis_daily_open(token, yyyymmdd):
             "appsecret": APP_SECRET,
             "tr_id": "FHKST03010100",
         }
-        res = requests.get(
+        res = SESSION.get(
             f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
             headers=headers,
             params={
