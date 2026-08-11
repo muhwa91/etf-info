@@ -1,4 +1,4 @@
-"""아침 발송 정상성 감시 — **이상할 때만** 디스코드로 알린다.
+"""아침 발송 정상성 감시 — **이상할 때만** 디스코드·텔레그램으로 알린다.
 
 운영자가 실제로 신경 쓰는 건 "아침에 텔레그램이 제때 오느냐"다. `antc_cnpr` 생성 여부는 그 안의
 재료일 뿐이고, 3회 연속 미생성처럼 매일 같은 값이면 알림이 소음이 된다(브리지 규칙:
@@ -8,6 +8,9 @@
 (= 주실행이 죽었다는 뜻. 2026-08-07 사고가 이 모양) ⑤ 발송 시각이 임계 초과 ⑥ 판정 불가.
 침묵(정상): 주실행 성공 + 발송됨 + 시각 정상. **antc 미확보로 인한 08:38 발송은 설계된
 폴백이므로 정상**이다 — 대신 알림이 나갈 때 antc 상태를 참고 정보로 함께 싣는다.
+
+여기서는 **발송 = 이상**이므로 알리는 모든 건을 텔레그램(수신 전용)에도 보낸다. 두 경로는
+서로 독립이다 — 디스코드가 401 로 죽어도 텔레그램은 나가고, 그 반대도 같다.
 
 판정 마커는 tiger_etf_simulator.py 가 실제로 찍는 문구이고, 2026-08-07·08-10·08-11 실 로그로
 대조했다. 설정은 환경변수(GitHub Secrets)로 주입 — 코드/로그/메시지에 비밀 미노출.
@@ -221,6 +224,44 @@ def notify(msg):
         return False
 
 
+_MD = re.compile(r"\*\*|`|^-#\s*", re.M)  # 디스코드 전용 마크업(굵게·코드·서브텍스트)
+
+
+def to_plain(text):
+    """디스코드 문구 → 텔레그램용 순수 텍스트.
+
+    텔레그램은 parse_mode 없이 보내므로(마크다운 파싱 실패로 전송이 통째로 거절되는 걸 피한다)
+    `**굵게**`·`` `코드` ``·`-# 서브텍스트`·`<링크>`(임베드 억제 표기)가 기호째 노출된다.
+    그것만 벗긴다.
+    """
+    return _MD.sub("", re.sub(r"<(https?://[^>\s]+)>", r"\1", text))
+
+
+def tg(msg):
+    """텔레그램 전송(수신 전용 봇). 실패는 삼키되 반드시 로그에 남긴다.
+
+    디스코드 notify() 와 **독립** — 한쪽이 실패해도 다른 쪽은 그대로 시도된다.
+    """
+    token = os.environ.get("TELEGRAM_DEV_BOT_TOKEN", "")
+    chat = os.environ.get("TELEGRAM_DEV_CHAT_ID", "")
+    if not token or not chat:
+        print("telegram skipped: 미설정")
+        return False
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        # UTF-8 명시 필수 — cp949 로 나가면 'strings must be encoded in UTF-8' 로 거절된다(실측).
+        data=json.dumps({"chat_id": chat, "text": to_plain(msg)}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15)
+        return True
+    except Exception as e:
+        print(f"telegram notify failed: {type(e).__name__}: {e}")
+        return False
+
+
 def gh(*args):
     """gh CLI 실행 → (성공여부, stdout). 실패면 stdout 자리에 사유를 담아 돌려준다."""
     repo = os.environ.get("GITHUB_REPOSITORY", "")
@@ -378,6 +419,13 @@ def selftest():
     body = build_message(diagnose(only_backup), only_backup, "08-11", "o/r")
     assert body.startswith("🚨") and "참고: 발송 10:52:48 KST" in body, body
     assert "actions/runs/31130875885" in body
+
+    # ⑩ 텔레그램 평문화 — parse_mode 없이 보내므로 마크다운 기호가 남으면 그대로 노출된다.
+    plain = to_plain(body)
+    assert plain.startswith("🚨 아침 발송 이상 (08-11)"), plain
+    assert "**" not in plain and "`" not in plain and "<http" not in plain, plain
+    assert "source fallback_model" in plain and "https://github.com/o/r/actions/" in plain, plain
+    assert to_plain("-# 각주\n**굵게** `코드` <https://a.b/c>") == "각주\n굵게 코드 https://a.b/c"
     print("selftest ok")
 
 
@@ -404,7 +452,9 @@ def main():
         os.environ.get("GITHUB_REPOSITORY", ""),
     )
     print(body)
-    if not notify(body):
+    ok = notify(body)
+    tg(body)  # 디스코드 성패와 무관하게 항상 시도 — 한 채널이 죽어도 알림 자체는 살아 있어야 한다
+    if not ok:
         sys.exit(1)  # 전송 실패는 러너를 붉게 만든다 — 조용한 실패는 감시가 없는 것과 같다
 
 
