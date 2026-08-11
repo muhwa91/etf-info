@@ -10,12 +10,16 @@
 폴백이므로 정상**이다 — 대신 알림이 나갈 때 antc 상태를 참고 정보로 함께 싣는다.
 
 여기서는 **발송 = 이상**이므로 알리는 모든 건을 텔레그램(수신 전용)에도 보낸다. 두 경로는
-서로 독립이다 — 디스코드가 401 로 죽어도 텔레그램은 나가고, 그 반대도 같다.
+서로 독립이다 — 디스코드가 401 로 죽어도 텔레그램은 나가고, 그 반대도 같다. 다만 **둘 중
+하나라도 실패(미설정 포함)하면 종료코드 1** 로 러너를 붉게 만든다 — 조용한 전송 실패는
+감시가 없는 것과 같고, 실제로 그렇게 놓쳤다(2026-08-12: 디스코드 401 이 묻히고 워크플로는 초록).
 
 판정 마커는 tiger_etf_simulator.py 가 실제로 찍는 문구이고, 2026-08-07·08-10·08-11 실 로그로
 대조했다. 설정은 환경변수(GitHub Secrets)로 주입 — 코드/로그/메시지에 비밀 미노출.
 """
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -33,7 +37,6 @@ MARK_SENT = "✅ 텔레그램 메시지 전송 성공!"  # :254 — 발송 성�
 # MARK_SEND_FAIL 줄에는 텔레그램 응답 본문이 붙는다 — 횟수만 세고 본문은 싣지 않는다.
 MARK_SEND_FAIL = "❌ 텔레그램 메시지 전송 실패"  # :257 (3회 재시도 중 1회 실패)
 MARK_CLOSED = "감지 → 안내 메시지 발송 후 종료"  # :1533 국내 휴장·미국 전일 휴장 안내 경로
-MARK_SKIP = "이미 전송됨 → 이번 예약 실행 스킵"  # 백업 예약이 조용히 빠진 정상 동작
 MARK_DEADLINE = "⏳ 폴링 데드라인(08:38) 도달"  # :1621 — antc 미확보(참고 정보)
 MARK_POLL = "⏳ 예상체결가 대기 폴링..."  # :1627
 MARK_GOT = "✅ antc_cnpr 확보"  # :1630 (폴링 중 확보일 때만. 첫 조회에 잡히면 안 찍힌다)
@@ -99,13 +102,22 @@ def scan(log):
         "polls": max(polls) if polls else 0,
         "deadline": any(MARK_DEADLINE in ln for ln in lines),
         "closed": any(MARK_CLOSED in ln for ln in lines),
-        "skipped": any(MARK_SKIP in ln for ln in lines),
     }
 
 
-def diagnose(infos):
-    """오늘 run 정보(오름차순) → [(kind, 설명)]. kind='이상'|'보류'. **빈 리스트 = 정상**."""
+def diagnose(infos, now_hm=None):
+    """오늘 run 정보(오름차순) → [(kind, 설명)]. kind='이상'|'보류'. **빈 리스트 = 정상**.
+
+    now_hm: 현재 시각(KST HHMM). 주면 **아침 전 오탐을 막는 가드**가 켜진다. None 이면 종전대로
+    시각을 안 따진다(순수 판정 — 기존 케이스가 그대로 성립한다).
+    """
     if not infos:
+        # 전송창(08:44)이 닫히기 전에는 "실행 0건"이 정상이다. cron 은 09:30 이라 정기 실행은
+        # 늘 이 선을 넘지만, **수동 dispatch 는 아무 때나 온다** — 2026-08-12 새벽 01:07 에
+        # 검증용으로 한 번 돌렸다가 텔레그램까지 오탐이 나갔다. 텔레그램은 "울리면 진짜"가
+        # 계약이라 오탐 한 번이 그 계약을 깬다.
+        if now_hm is not None and now_hm < LATE_HM:
+            return []
         return [
             (
                 "이상",
@@ -224,7 +236,8 @@ def notify(msg):
         return False
 
 
-_MD = re.compile(r"\*\*|`|^-#\s*", re.M)  # 디스코드 전용 마크업(굵게·코드·서브텍스트)
+# `\s` 를 쓰면 개행까지 먹어 '-#\n다음 줄' 이 한 줄로 합쳐진다 → 같은 줄의 공백만([ \t]).
+_MD = re.compile(r"\*\*|`|^-#[ \t]*", re.M)  # 디스코드 전용 마크업(굵게·코드·서브텍스트)
 
 
 def to_plain(text):
@@ -237,6 +250,20 @@ def to_plain(text):
     return _MD.sub("", re.sub(r"<(https?://[^>\s]+)>", r"\1", text))
 
 
+def mask(text, secret):
+    """예외 메시지에서 시크릿을 가린다(러너 로그에 평문이 남지 않게).
+
+    원문뿐 아니라 **repr 로 escape 된 형태**도 지운다: 토큰에 개행이 섞이면(시크릿 붙여넣기 사고)
+    http.client 가 InvalidURL 로 selector 를 repr 로 찍어 개행이 `\\n` 두 글자가 된다 —
+    원문만 replace 하면 한 글자도 안 가려진다(실측).
+    """
+    if not secret:  # replace("", ...) 는 글자 사이마다 끼워 넣어 문자열을 망가뜨린다
+        return text
+    return text.replace(secret, "***").replace(repr(secret)[1:-1], "***")
+
+
+# 쌍둥이: 공개 레포 muhwa91/oci_arm_grabber 의 check_tenancy.py 의 tg()/to_plain()/mask()
+# — 한쪽만 고치지 마라(레포가 갈려 있어 공유 모듈은 못 만든다)
 def tg(msg):
     """텔레그램 전송(수신 전용 봇). 실패는 삼키되 반드시 로그에 남긴다.
 
@@ -258,7 +285,8 @@ def tg(msg):
         urllib.request.urlopen(req, timeout=15)
         return True
     except Exception as e:
-        print(f"telegram notify failed: {type(e).__name__}: {e}")
+        # 토큰이 URL 경로에 들어가므로 예외 메시지에 평문으로 실린다 → 반드시 가리고 찍는다.
+        print(f"telegram notify failed: {type(e).__name__}: {mask(str(e), token)}")
         return False
 
 
@@ -333,13 +361,14 @@ def selftest():
     s = scan(normal)
     assert s["sent_at"] == "08:38:22" and s["polls"] == 32 and s["deadline"], s
     assert s["source"] == "fallback_model" and not s["closed"], s
+    # 백업 예약이 마커를 보고 조용히 빠진 정상 동작 — 발송 로그가 없다는 사실만 보면 된다.
     skip = scan(
         ln(
             "00:05:51",
             "오늘(2026-08-11) 동시호가 예상 시가 메시지는 이미 전송됨 → 이번 예약 실행 스킵.",
         )
     )
-    assert skip["skipped"] and not skip["sent_at"], skip
+    assert not skip["sent_at"], skip
     day = [info(1, "workflow_dispatch", "08:24", s), info(2, "schedule", "09:05", skip)]
     assert diagnose(day) == [], diagnose(day)
     assert build_message([], day, "08-11", "o/r") is None
@@ -395,6 +424,12 @@ def selftest():
 
     # ⑦ 판정 불가 3갈래는 '이상'과 구분된다 — 실행 없음만 이상(GAS·예약 동시 실패는 사고다).
     assert [k for k, _ in diagnose([])] == ["이상"]
+    # 아침 전 가드 — 전송창(08:44) 안이면 "실행 0건"은 정상, 닫힌 뒤부터 이상.
+    # 경계를 양쪽으로 짚는다: 844 는 아직 전송 가능 시각이고 845 부터가 지연이다.
+    assert diagnose([], 107) == []  # 새벽 수동 dispatch — 2026-08-12 오탐이 난 그 시각
+    assert diagnose([], LATE_HM - 1) == []
+    assert [k for k, _ in diagnose([], LATE_HM)] == ["이상"]
+    assert [k for k, _ in diagnose([], 930)] == ["이상"]  # 정기 cron 시각엔 종전대로 운다
     assert [k for k, _ in diagnose([info(1, "schedule", "09:05", None, status="in_progress")])] == [
         "보류"
     ]
@@ -426,7 +461,59 @@ def selftest():
     assert "**" not in plain and "`" not in plain and "<http" not in plain, plain
     assert "source fallback_model" in plain and "https://github.com/o/r/actions/" in plain, plain
     assert to_plain("-# 각주\n**굵게** `코드` <https://a.b/c>") == "각주\n굵게 코드 https://a.b/c"
+    # `-#` 뒤가 개행뿐이어도 줄을 합치지 않는다(\s 를 쓰면 다음 줄이 끌려 올라온다).
+    assert to_plain("-#\n다음 줄") == "\n다음 줄"
+
+    tg_selftest()
     print("selftest ok")
+
+
+def tg_selftest():
+    """tg() 검증 — urlopen 을 갈아끼워 **실제로 만들어지는 Request** 를 본다(네트워크 안 나감).
+
+    tg() 는 2026-08-12 신설이고, 같은 날 cp949 인코딩으로 텔레그램이 전송을 통째로 거절한
+    사고가 있었다(`Bad Request: strings must be encoded in UTF-8`). 그 재발을 잡는 장치다.
+    """
+    seen = {}
+
+    def fake_urlopen(req, **_kw):  # timeout 등은 안 본다
+        seen["req"] = req
+        return io.BytesIO(b'{"ok":true}')  # 반환값은 tg 가 쓰지 않는다
+
+    saved = {k: os.environ.get(k) for k in ("TELEGRAM_DEV_BOT_TOKEN", "TELEGRAM_DEV_CHAT_ID")}
+    real_urlopen = urllib.request.urlopen
+    try:
+        os.environ["TELEGRAM_DEV_BOT_TOKEN"] = "12345:ABCdef"
+        os.environ["TELEGRAM_DEV_CHAT_ID"] = "42"
+        urllib.request.urlopen = fake_urlopen
+        assert tg("**굵게** 한글 메시지") is True
+        # ① 본문이 UTF-8 로 디코드된다 — cp949 로 인코딩됐다면 여기서 깨진다.
+        payload = json.loads(seen["req"].data.decode("utf-8"))
+        assert payload["text"] == "굵게 한글 메시지", payload  # 한글 왕복 무손실 + 마크업 제거
+        assert payload["chat_id"] == "42", payload
+
+        # ② 시크릿 미설정이면 urlopen 을 아예 호출하지 않고 False.
+        seen.clear()
+        del os.environ["TELEGRAM_DEV_BOT_TOKEN"]
+        assert tg("x") is False and not seen
+
+        # ③ 예외가 나도 삼키고 False(러너를 죽이지 않는다) + 토큰이 로그에 안 남는다.
+        #    개행 섞인 토큰 = 시크릿 붙여넣기 사고의 전형 → 실제 urlopen 이 InvalidURL 로 죽는다
+        #    (URL 검증 단계라 소켓은 열리지 않는다).
+        os.environ["TELEGRAM_DEV_BOT_TOKEN"] = "12345:ABCdef_SECRET\nX"
+        urllib.request.urlopen = real_urlopen
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            assert tg("x") is False
+        out = buf.getvalue()
+        assert "InvalidURL" in out and "SECRET" not in out and "***" in out, out
+    finally:
+        urllib.request.urlopen = real_urlopen
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 def main():
@@ -436,7 +523,8 @@ def main():
         selftest()
         return
     infos, err = collect()
-    problems = [("보류", err)] if err else diagnose(infos)
+    now = datetime.now(KST)
+    problems = [("보류", err)] if err else diagnose(infos, now.hour * 100 + now.minute)
     for i in infos:
         print(
             f"run {i['databaseId']} {i['event']} {i['kst']} "
@@ -452,10 +540,15 @@ def main():
         os.environ.get("GITHUB_REPOSITORY", ""),
     )
     print(body)
+    # 두 전송은 서로 독립이다 — 디스코드 성패와 무관하게 텔레그램도 항상 시도한다
+    # (단축평가로 한쪽을 건너뛰면 안 되므로 각각 호출한 뒤에 합친다).
     ok = notify(body)
-    tg(body)  # 디스코드 성패와 무관하게 항상 시도 — 한 채널이 죽어도 알림 자체는 살아 있어야 한다
-    if not ok:
-        sys.exit(1)  # 전송 실패는 러너를 붉게 만든다 — 조용한 실패는 감시가 없는 것과 같다
+    tg_ok = tg(body)
+    if not (ok and tg_ok):
+        # 전송 실패는 러너를 붉게 만든다 — 조용한 실패는 감시가 없는 것과 같다.
+        # tg() 는 시크릿 미설정도 False 로 준다. 텔레그램은 백업 채널로 실제 등록해 뒀으므로
+        # 미설정 = 백업 없음이고, 그건 정확히 알아야 할 신호다 → 실패와 똑같이 붉게 둔다.
+        sys.exit(1)
 
 
 if __name__ == "__main__":
