@@ -73,7 +73,7 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 
 `etf_info.js`(동작 중인 GAS 코드) 를 **로컬에서 고치고 곧바로 Apps Script 로 푸시**하기 위해 Google 공식 CLI
 [`clasp`](https://github.com/google/clasp) 를 이 폴더에 설치해 뒀다(`package.json` 의 devDependency).
-연결·로그인은 완료된 상태(`scriptId` in `.clasp.json`, `muhwa91@gmail.com`). 모든 명령은 **이 `apps_script/` 폴더에서** 실행한다.
+연결·로그인은 완료된 상태(`scriptId` in `.clasp.json`, 개발자 구글 계정). 모든 명령은 **이 `apps_script/` 폴더에서** 실행한다.
 
 ### 최초 1회 설정 (✅ 완료됨 — 새 PC/재로그인 시에만 참고)
 1. **Apps Script API 켜기**: https://script.google.com/home/usersettings → "Google Apps Script API" **ON**.
