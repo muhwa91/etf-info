@@ -74,7 +74,7 @@ GitHub Actions cron은 정시 발화를 보장하지 못한다(실측 08:30 지�
 ## 자동 실행
 
 - **주 경로**: GAS 알람([apps_script/](apps_script/)) — 평일 08:20~08:32 GitHub 워크플로를 `workflow_dispatch`로 깨움
-- **백업**: GitHub Actions cron (레포 루트 `.github/workflows/etf_simulator.yml`, 08:50·09:05 KST)
+- **백업**: GitHub Actions cron 2회 (08:50·09:05 KST) — GAS 가 못 깨웠을 때만 의미가 있다
 
 ## 테스트 · 린트
 
