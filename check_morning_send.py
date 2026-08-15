@@ -6,7 +6,7 @@
 
 알림(이상): ① run 실패 ② 그날 실행 없음 ③ 발송 로그 없음 ④ 백업 예약이 대신 발송
 (= 주실행이 죽었다는 뜻. 2026-08-07 사고가 이 모양) ⑤ 발송 시각이 임계 초과 ⑥ 판정 불가.
-침묵(정상): 주실행 성공 + 발송됨 + 시각 정상. **antc 미확보로 인한 08:38 발송은 설계된
+침묵(정상): 주실행 성공 + 발송됨 + 시각 정상. **antc 미확보로 인한 08:44 발송은 설계된
 폴백이므로 정상**이다 — 대신 알림이 나갈 때 antc 상태를 참고 정보로 함께 싣는다.
 
 여기서는 **발송 = 이상**이므로 알리는 모든 건을 텔레그램(수신 전용)에도 보낸다. 두 경로는
@@ -37,16 +37,23 @@ MARK_SENT = "✅ 텔레그램 메시지 전송 성공!"  # :254 — 발송 성�
 # MARK_SEND_FAIL 줄에는 텔레그램 응답 본문이 붙는다 — 횟수만 세고 본문은 싣지 않는다.
 MARK_SEND_FAIL = "❌ 텔레그램 메시지 전송 실패"  # :257 (3회 재시도 중 1회 실패)
 MARK_CLOSED = "감지 → 안내 메시지 발송 후 종료"  # :1533 국내 휴장·미국 전일 휴장 안내 경로
-MARK_DEADLINE = "⏳ 폴링 데드라인(08:38) 도달"  # :1621 — antc 미확보(참고 정보)
+MARK_DEADLINE = "⏳ 폴링 데드라인(08:44) 도달"  # antc 미확보(참고 정보)
+# ⚠️ 이 문자열은 시뮬레이터의 print 와 **글자 단위로 일치해야** 한다.
+#   시각을 바꾸면 양쪽을 같이 고칠 것 — 한쪽만 고치면 예외도 실패도 없이
+#   «마커를 영영 못 찾는» 상태가 된다(2026-08-16 selftest 가 잡았다).
 MARK_POLL = "⏳ 예상체결가 대기 폴링..."  # :1627
 MARK_GOT = "✅ antc_cnpr 확보"  # :1630 (폴링 중 확보일 때만. 첫 조회에 잡히면 안 찍힌다)
 
-# 발송 지연 임계(KST HHMM). 08:45 이상이면 이상.
-#   근거: 설계상 정상 최대치가 08:44 다 — 발송 목표 08:30 → antc 폴링 데드라인 08:38(:1615)
-#   → KIS 토큰 재시도 마감 `deadline_hm=844` = "전송창 마감 08:44"(:1493). 그 뒤 08:45 부터는
-#   백업 cron 의 영역이므로, 08:45 이후 발송은 주실행이 제 몫을 못 한 것이다.
-#   08:38~08:44 는 antc 미확보 시 설계된 폴백 구간이라 정상으로 둔다(실측 08:38:22 발송).
-LATE_HM = 845
+# 발송 지연 임계(KST HHMM). 08:47 이상이면 이상.
+#   근거: 설계상 정상 최대치가 08:46 이다 — 발송 목표 **08:40**(예상체결가 공표 개시)
+#   → antc 폴링 데드라인 **08:44** → KIS 토큰 재시도 마감 `deadline_hm=846`.
+#   그 뒤 발송은 주실행이 제 몫을 못 한 것이므로 이상으로 본다(백업 cron 08:50 발송도 여기 걸린다 —
+#   백업이 떴다는 것 자체가 주실행 실패라 종전 설계와 같은 의미다).
+#   08:44~08:46 은 antc 미확보 시 설계된 폴백 구간이라 정상으로 둔다.
+#   ⚠️ 불변식: 발송목표(840) < 폴링데드라인(844) < 토큰마감(846) < LATE_HM(847) ≤ 백업cron(850).
+#   (2026-08-16 A안 — 종전 830/838/844/845 는 KRX 공표 개시 08:40 보다 이른 값이라
+#    antc 가 29거래일 내내 0 이었다.)
+LATE_HM = 847
 
 _TS = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")  # gh --log 줄머리 UTC 타임스탬프
 _SOURCE = re.compile(r"🧾 정확도 로그 append: \d{4}-\d{2}-\d{2} · (\S+) ·")
@@ -70,7 +77,7 @@ def line_time(line):
 
 
 def hm(hms):
-    """'08:38:22' → 838. 빈 값/이상값은 0(임계 비교에서 정상으로 떨어진다)."""
+    """'08:44:22' → 844. 빈 값/이상값은 0(임계 비교에서 정상으로 떨어진다)."""
     try:
         return int(hms[:2]) * 100 + int(hms[3:5])
     except (ValueError, IndexError):
@@ -105,6 +112,9 @@ def scan(log):
     }
 
 
+EVENT_KO = {"workflow_dispatch": "주실행", "schedule": "백업 예약"}
+
+
 def diagnose(infos, now_hm=None):
     """오늘 run 정보(오름차순) → [(kind, 설명)]. kind='이상'|'보류'. **빈 리스트 = 정상**.
 
@@ -112,17 +122,15 @@ def diagnose(infos, now_hm=None):
     시각을 안 따진다(순수 판정 — 기존 케이스가 그대로 성립한다).
     """
     if not infos:
-        # 전송창(08:44)이 닫히기 전에는 "실행 0건"이 정상이다. cron 은 09:30 이라 정기 실행은
+        # 전송창(08:46)이 닫히기 전에는 "실행 0건"이 정상이다. cron 은 09:30 이라 정기 실행은
         # 늘 이 선을 넘지만, **수동 dispatch 는 아무 때나 온다** — 2026-08-12 새벽 01:07 에
         # 검증용으로 한 번 돌렸다가 텔레그램까지 오탐이 나갔다. 텔레그램은 "울리면 진짜"가
         # 계약이라 오탐 한 번이 그 계약을 깬다.
         if now_hm is not None and now_hm < LATE_HM:
             return []
         return [
-            (
-                "이상",
-                "오늘 etf_simulator 실행이 아예 없다 — GAS dispatch·백업 예약 둘 다 안 깨어났다",
-            )
+            ("이상", "etf_simulator 실행 X"),
+            ("이상", "GAS dispatch·백업 예약 둘 다 실행 X"),
         ]
     done = [i for i in infos if i.get("status") == "completed"]
     if not done:
@@ -130,7 +138,7 @@ def diagnose(infos, now_hm=None):
         #   늦게 도는 백업 예약(실측 10:00~12:47)을 '보류'로 매일 알리면 그게 소음이다.
         return [("보류", f"오늘 실행 {len(infos)}건이 모두 진행 중 — 판정 불가")]
     out = [
-        ("이상", f"run 실패 — {i['databaseId']} ({i['event']} {i['kst']} · {i['conclusion']})")
+        ("이상", f"{EVENT_KO.get(i['event'], i['event'])} 실패 ({i['kst']})")
         for i in done
         if i.get("conclusion") != "success"
     ]
@@ -147,51 +155,65 @@ def diagnose(infos, now_hm=None):
         # (공휴일마다 '백업이 대신 발송'으로 오탐하는 걸 막는다).
         return out
     if len(sent) > 1:
-        ids = ", ".join(str(i["databaseId"]) for i in sent)
-        out.append(
-            (
-                "이상",
-                f"중복 발송 {len(sent)}건({ids}) — 앞선 실행이 죽어 마커 유실(2026-08-07 모양)",
-            )
-        )
+        # run id 는 폰에서 눌러갈 수 없다 — 아래 링크가 그 역할을 하므로 본문엔 건수만 남긴다.
+        out.append(("이상", f"중복 발송 {len(sent)}건 — 앞선 실행이 죽어 기록 유실"))
     first = sent[0]
     if first["event"] != "workflow_dispatch":
-        out.append(
-            (
-                "이상",
-                f"백업 예약({first['event']} {first['kst']})이 대신 발송 — 주실행이 죽었다",
-            )
-        )
+        out.append(("이상", f"백업 예약이 {first['kst']}에 대신 발송 — 주실행이 죽었다"))
     late = [i for i in sent if hm(i["scan"]["sent_at"]) >= LATE_HM]
     if late:
-        out.append(
-            ("이상", f"발송 지연 {late[0]['scan']['sent_at']} KST — 전송창 마감(08:44)을 넘겼다")
-        )
+        out.append(("이상", f"발송 : {late[0]['scan']['sent_at'][:5]} (전송창 08:46 넘김)"))
     return out
 
 
-def antc_note(infos):
-    """알림에 함께 실을 참고 정보(원인 판단용) — antc 확보 여부·폴링·발송 시각."""
+# 로그의 source 값 → 폰에서 읽히는 말. 모르는 값은 원문 그대로 둔다(조용히 감추지 않는다).
+SOURCE_KO = {
+    "antc": "실측 — 장전 예상 시가",
+    "fallback_model": "추정치 — 예상 시가 못 받음",
+    "naver": "네이버에서 가져온 값",
+}
+
+
+def antc_lines(infos):
+    """원인 판단용 참고 줄 — 로그 용어(source·폴링·데드라인)를 사람 말로 바꾼다.
+
+    발송 시각은 여기서 내지 않는다. 늦었을 때만 의미가 있고, 그건 diagnose 의
+    `발송 : HH:MM (전송창 08:46 넘김)` 항목이 이미 말한다(두 곳에서 내면 중복된다).
+    """
     for i in infos:
         s = i.get("scan") or {}
-        bits = []
-        if s.get("sent_at"):
-            bits.append(f"발송 {s['sent_at']} KST")
+        out = []
         if s.get("source"):
-            bits.append(f"source `{s['source']}`")
-        if s.get("polls"):
-            bits.append(f"antc 폴링 {s['polls']}회")
-        if s.get("deadline"):
-            bits.append("데드라인(08:38) 도달 = antc 미확보")
+            note = SOURCE_KO.get(s["source"], s["source"])
+            if s.get("polls"):
+                when = "08:44까지 " if s.get("deadline") else ""
+                note += f" ({when}{s['polls']}번 요청)"
+            elif s.get("deadline"):
+                note += " (08:44까지 못 받음)"
+            out.append(f"- 값 : {note}")
+        elif s.get("polls"):  # source 를 못 읽은 날에도 요청 횟수는 단서가 된다
+            out.append(f"- 예상 시가 {s['polls']}번 요청")
         if s.get("send_fail"):
-            bits.append(f"텔레그램 전송 실패 {s['send_fail']}회")
-        if bits:
-            return "참고: " + " · ".join(bits)
-    return ""
+            out.append(f"- 폰 전송 {s['send_fail']}번 실패")
+        if out:
+            return out
+    return []
+
+
+PROJECT = "💼 etf-info"  # 알림 머리글. 💼 는 세 알림(발송이상·테넌시·PC활성화) 공통 표식이다
+
+
+def kdate(d):
+    """머리글 날짜 `26년 8월 12일`. strftime 의 `%-m`(리눅스 전용)을 피해 직접 조립한다."""
+    return f"{d.year % 100}년 {d.month}월 {d.day}일"
 
 
 def build_message(problems, infos, day, repo):
-    """이상 판정 → 디스코드 메시지. 정상(problems 비었음)이면 None(= 발신 안 함)."""
+    """이상 판정 → 알림 메시지. 정상(problems 비었음)이면 None(= 발신 안 함).
+
+    디스코드·텔레그램이 같은 본문을 쓴다 — 마크업은 `to_plain` 이 벗기므로
+    텔레그램에서는 `**` 없는 모습이 그대로 개발자가 확정한 형식이다.
+    """
     if not problems:
         return None
     head = (
@@ -199,10 +221,9 @@ def build_message(problems, infos, day, repo):
         if any(k == "이상" for k, _ in problems)
         else "❓ **아침 발송 판정 불가**"
     )
-    lines = [f"{head} ({day})"] + [f"• {t}" for _, t in problems]
-    note = antc_note(infos)
-    if note:
-        lines.append(note)
+    lines = [f"[{day}]", PROJECT, head]
+    lines += [f"- {t}" for _, t in problems]
+    lines += antc_lines(infos)
     if repo:
         lines += [f"<https://github.com/{repo}/actions/runs/{i['databaseId']}>" for i in infos[:2]]
     return "\n".join(lines)
@@ -348,18 +369,20 @@ def selftest():
             "scan": scan_,
         }
 
-    # ① 2026-08-11 주실행 실 로그(antc 미확보 → 08:38 폴백 발송) = 정상, 침묵.
+    # ① 주실행 실 로그(2026-08-11, antc 미확보 → 폴백 발송) = 정상, 침묵.
+    #    시각만 새 설계값(폴링 데드라인 08:44)으로 옮겼다 — 마커는 MARK_DEADLINE 과 글자 단위로
+    #    일치해야 하고, 감시는 «오늘» 로그만 읽으므로 옛 형식을 보존할 이유가 없다.
     normal = "\n".join(
         [
-            ln("23:38:22", "⏳ 예상체결가 대기 폴링... (08:38:08, 시도 32)"),
-            ln("23:38:22", "⏳ 폴링 데드라인(08:38) 도달 — antc_cnpr 끝내 미확보, 폴백으로 진행."),
-            ln("23:38:22", "💬 텔레그램 메시지 전송 중..."),
-            ln("23:38:22", "  ✅ 텔레그램 메시지 전송 성공!"),
-            ln("23:38:22", "  🧾 정확도 로그 append: 2026-08-11 · fallback_model · 예상 8,485원"),
+            ln("23:44:22", "⏳ 예상체결가 대기 폴링... (08:44:08, 시도 32)"),
+            ln("23:44:22", "⏳ 폴링 데드라인(08:44) 도달 — antc_cnpr 끝내 미확보, 폴백으로 진행."),
+            ln("23:44:22", "💬 텔레그램 메시지 전송 중..."),
+            ln("23:44:22", "  ✅ 텔레그램 메시지 전송 성공!"),
+            ln("23:44:22", "  🧾 정확도 로그 append: 2026-08-11 · fallback_model · 예상 8,485원"),
         ]
     )
     s = scan(normal)
-    assert s["sent_at"] == "08:38:22" and s["polls"] == 32 and s["deadline"], s
+    assert s["sent_at"] == "08:44:22" and s["polls"] == 32 and s["deadline"], s
     assert s["source"] == "fallback_model" and not s["closed"], s
     # 백업 예약이 마커를 보고 조용히 빠진 정상 동작 — 발송 로그가 없다는 사실만 보면 된다.
     skip = scan(
@@ -385,7 +408,7 @@ def selftest():
     ]
     kinds = diagnose(crash)
     assert [k for k, _ in kinds] == ["이상", "이상"], kinds
-    assert "run 실패" in kinds[0][1] and "발송 로그 없음" in kinds[1][1], kinds
+    assert "주실행 실패" in kinds[0][1] and "발송 로그 없음" in kinds[1][1], kinds
 
     # ③ 백업 예약이 대신 발송(주실행이 죽은 신호) + 지연 임계 초과.
     late = dict(s, sent_at="10:52:48")
@@ -394,7 +417,7 @@ def selftest():
         info(31139413115, "schedule", "10:52", late),
     ]
     texts = " | ".join(t for _, t in diagnose(only_backup))
-    assert "백업 예약" in texts and "발송 지연" in texts and "run 실패" in texts, texts
+    assert "백업 예약" in texts and "전송창 08:46 넘김" in texts and "주실행 실패" in texts, texts
 
     # ④ 중복 발송(주실행·백업 둘 다 보냄) — 8/7 이 마커 유실로 이렇게 갈 뻔했다.
     dup = [
@@ -402,12 +425,12 @@ def selftest():
         info(2, "schedule", "09:05", dict(s, sent_at="09:05:10")),
     ]
     texts = " | ".join(t for _, t in diagnose(dup))
-    assert "중복 발송 2건" in texts and "발송 지연" in texts, texts
+    assert "중복 발송 2건" in texts and "전송창 08:46 넘김" in texts, texts
 
-    # ⑤ 임계 경계: 08:44 정상 / 08:45 이상.
-    assert diagnose([info(1, "workflow_dispatch", "08:24", dict(s, sent_at="08:44:59"))]) == []
-    assert diagnose([info(1, "workflow_dispatch", "08:24", dict(s, sent_at="08:45:00"))]), (
-        "08:45 은 이상"
+    # ⑤ 임계 경계: 08:46 정상 / 08:47 이상 (LATE_HM=847 = 토큰마감 846 다음 분).
+    assert diagnose([info(1, "workflow_dispatch", "08:24", dict(s, sent_at="08:46:59"))]) == []
+    assert diagnose([info(1, "workflow_dispatch", "08:24", dict(s, sent_at="08:47:00"))]), (
+        "08:47 은 이상"
     )
 
     # ⑥ 휴장 안내 경로 — 백업이 늦게 보내도 침묵(공휴일 오탐 방지). 단 발송조차 없으면 이상.
@@ -423,19 +446,26 @@ def selftest():
     assert diagnose([info(1, "schedule", "09:05", dict(closed, sent_at="09:05:00"))]) == []
 
     # ⑦ 판정 불가 3갈래는 '이상'과 구분된다 — 실행 없음만 이상(GAS·예약 동시 실패는 사고다).
-    assert [k for k, _ in diagnose([])] == ["이상"]
+    # 실행 0건은 **두 줄**로 낸다(원인이 둘: 주실행·백업). 폰에서 한 줄이 길면 안 읽힌다.
+    assert [k for k, _ in diagnose([])] == ["이상", "이상"]
+    assert [t for _, t in diagnose([])] == [
+        "etf_simulator 실행 X",
+        "GAS dispatch·백업 예약 둘 다 실행 X",
+    ]
     # 아침 전 가드 — 전송창(08:44) 안이면 "실행 0건"은 정상, 닫힌 뒤부터 이상.
-    # 경계를 양쪽으로 짚는다: 844 는 아직 전송 가능 시각이고 845 부터가 지연이다.
+    # 경계를 양쪽으로 짚는다: 846 은 아직 전송 가능 시각이고 847 부터가 지연이다.
     assert diagnose([], 107) == []  # 새벽 수동 dispatch — 2026-08-12 오탐이 난 그 시각
     assert diagnose([], LATE_HM - 1) == []
-    assert [k for k, _ in diagnose([], LATE_HM)] == ["이상"]
-    assert [k for k, _ in diagnose([], 930)] == ["이상"]  # 정기 cron 시각엔 종전대로 운다
+    assert [k for k, _ in diagnose([], LATE_HM)] == ["이상", "이상"]
+    assert [k for k, _ in diagnose([], 930)] == ["이상", "이상"]  # 정기 cron 시각엔 종전대로 운다
     assert [k for k, _ in diagnose([info(1, "schedule", "09:05", None, status="in_progress")])] == [
         "보류"
     ]
     unread = diagnose([info(1, "workflow_dispatch", "08:24", None)])
     assert [k for k, _ in unread] == ["보류"] and "로그 조회 실패" in unread[0][1], unread
-    assert build_message(unread, [], "08-11", "")[:1] == "❓"
+    assert build_message(unread, [], "26년 8월 11일", "").startswith(
+        "[26년 8월 11일]\n💼 etf-info\n❓"
+    )
 
     # ⑧ run 선별: UTC createdAt → KST 날짜로 가르고 오름차순. 08-10 23:24Z = KST 08-11 08:24.
     picked = pick_today_runs(
@@ -450,16 +480,20 @@ def selftest():
     assert [r["databaseId"] for r in picked] == [1, 2], picked
     assert picked[0]["kst"] == "08:24", picked[0]
 
-    # ⑨ 메시지: 비밀 없음·참고 정보 포함·run 링크.
-    body = build_message(diagnose(only_backup), only_backup, "08-11", "o/r")
-    assert body.startswith("🚨") and "참고: 발송 10:52:48 KST" in body, body
+    # ⑨ 메시지: 머리글 3줄(날짜·프로젝트·판정) + `- ` 항목 · 비밀 없음 · run 링크.
+    body = build_message(diagnose(only_backup), only_backup, "26년 8월 11일", "o/r")
+    assert body.startswith("[26년 8월 11일]\n💼 etf-info\n🚨"), body
+    assert "- 발송 : 10:52 (전송창 08:46 넘김)" in body, body
+    assert "- 값 : 추정치 — 예상 시가 못 받음 (08:44까지 32번 요청)" in body, body
     assert "actions/runs/31130875885" in body
 
     # ⑩ 텔레그램 평문화 — parse_mode 없이 보내므로 마크다운 기호가 남으면 그대로 노출된다.
     plain = to_plain(body)
-    assert plain.startswith("🚨 아침 발송 이상 (08-11)"), plain
+    assert plain.startswith("[26년 8월 11일]\n💼 etf-info\n🚨 아침 발송 이상"), plain
     assert "**" not in plain and "`" not in plain and "<http" not in plain, plain
-    assert "source fallback_model" in plain and "https://github.com/o/r/actions/" in plain, plain
+    # 로그 용어가 폰까지 새지 않는지 — 이번 변경의 목적을 여기서 잠근다.
+    assert "source" not in plain and "폴링" not in plain, plain
+    assert "https://github.com/o/r/actions/" in plain, plain
     assert to_plain("-# 각주\n**굵게** `코드` <https://a.b/c>") == "각주\n굵게 코드 https://a.b/c"
     # `-#` 뒤가 개행뿐이어도 줄을 합치지 않는다(\s 를 쓰면 다음 줄이 끌려 올라온다).
     assert to_plain("-#\n다음 줄") == "\n다음 줄"
@@ -536,7 +570,7 @@ def main():
     body = build_message(
         problems,
         infos,
-        datetime.now(KST).strftime("%m-%d"),
+        kdate(now),
         os.environ.get("GITHUB_REPOSITORY", ""),
     )
     print(body)
