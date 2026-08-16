@@ -23,21 +23,28 @@
 이 스크립트는 KIS 실측으로 '개선 전/후 시가 오차'를 산출하고,
 일별 (시가/종가) 분포로 '개장 vs 종가 단기 할인변동'의 예측가능성(=한계)을 보고한다.
 """
+import contextlib
+import datetime
 import sys
 import time
-import datetime
 
-from tiger_etf_simulator import (
-    get_token, BASE_URL, APP_KEY, APP_SECRET, ETF_CODE, safe_float,
-    OPEN_DPRT_RATIO, get_etf_open_nav, get_etf_nav,
-)
 import requests
 
+from tiger_etf_simulator import (
+    APP_KEY,
+    APP_SECRET,
+    BASE_URL,
+    ETF_CODE,
+    OPEN_DPRT_RATIO,
+    get_etf_nav,
+    get_etf_open_nav,
+    get_token,
+    safe_float,
+)
+
 if sys.stdout.encoding != 'utf-8':
-    try:
+    with contextlib.suppress(AttributeError):
         sys.stdout.reconfigure(encoding='utf-8')
-    except AttributeError:
-        pass
 
 
 def get_etf_daily_ohlc(token, days=40):
@@ -95,7 +102,10 @@ def main():
 
         print(f"  실제 시가           : {open_actual:>8,.0f}원")
         print(f"  개장NAV / 현재NAV    : {oprc_nav:>8,.2f} / {cur_nav:,.2f}")
-        print(f"  개장 괴리율 / 종가 괴리율 : {open_dprt:+.2f}% / {close_dprt:+.2f}%  (비율 {open_dprt/close_dprt:.2f})")
+        print(
+            f"  개장 괴리율 / 종가 괴리율 : {open_dprt:+.2f}% / {close_dprt:+.2f}%  "
+            f"(비율 {open_dprt/close_dprt:.2f})"
+        )
         print("-" * 64)
         print(f"  개선 전(고정 -1.1% 할인)        : {p_old:>8,.0f}원  (오차 {err(p_old):+.2f}%)")
         print(f"  개선 후(종가괴리×{OPEN_DPRT_RATIO} cold-start) : {p_new:>8,.0f}원  (오차 {err(p_new):+.2f}%)")
@@ -110,17 +120,20 @@ def main():
     d = [(dt, (etf[dt]["open"] / etf[dt]["close"] - 1) * 100)
          for dt in dates if etf[dt]["close"] > 0]
     vals = [x[1] for x in d[-10:]]
-    n = len(vals); m = sum(vals) / n
+    n = len(vals)
+    m = sum(vals) / n
     sd = (sum((x - m) ** 2 for x in vals) / n) ** 0.5
     print(f"  최근 {n}일 (시가/종가-1) 평균 {m:+.2f}% · 표준편차 {sd:.2f}%")
 
     def mae(p, a):
-        return sum(abs(x - y) for x, y in zip(p, a)) / len(a) if a else float('nan')
+        return sum(abs(x - y) for x, y in zip(p, a, strict=False)) / len(a) if a else float('nan')
 
     tgt, e_avg3, e0 = [], [], []
     full = [x[1] for x in d]
     for i in range(3, len(full)):
-        tgt.append(full[i]); e_avg3.append(sum(full[i-3:i]) / 3); e0.append(0.0)
+        tgt.append(full[i])
+        e_avg3.append(sum(full[i-3:i]) / 3)
+        e0.append(0.0)
     print(f"  최근3일 평균 추정 MAE {mae(e_avg3, tgt):.2f}%p  vs  '변화없음(0%)' MAE {mae(e0, tgt):.2f}%p")
     print("  → 개장 대비 종가의 '단기 할인변동'은 지속성이 약해(노이즈) 예측 불가에 가깝다.")
     print("    구조적 '할인 수준'(종가 괴리율)은 며칠간 지속되므로 모델은 그 수준을 추종한다.")

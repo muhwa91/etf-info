@@ -15,13 +15,13 @@ import unittest
 # if __name__ == "__main__" 가드(1336번 줄)로 main() 자동 실행 없음 → import 안전.
 from tiger_etf_simulator import (
     SESSION,
-    should_poll_auction,
-    decide_auction_send,
-    should_send_naver_fallback,
     build_naver_auction_message,
     compute_accuracy,
-    parse_naver_daily,
+    decide_auction_send,
     is_backfill_target,
+    parse_naver_daily,
+    should_poll_auction,
+    should_send_naver_fallback,
 )
 
 

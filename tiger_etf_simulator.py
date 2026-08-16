@@ -1,20 +1,20 @@
+import ast
+import contextlib
+import csv
+import datetime
+import json
+import os
+import sys
+import time
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import time
-import os
-import json
-import csv
-import ast
-import datetime
-import sys
 
 # Windows UTF-8 encoding setup
 if sys.stdout.encoding != "utf-8":
-    try:
+    with contextlib.suppress(AttributeError):
         sys.stdout.reconfigure(encoding="utf-8")
-    except AttributeError:
-        pass
 
 APP_KEY = os.environ.get("KIS_APP_KEY")
 APP_SECRET = os.environ.get("KIS_APP_SECRET")
@@ -23,7 +23,7 @@ APP_SECRET = os.environ.get("KIS_APP_SECRET")
 kis_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kis_config.json")
 if (not APP_KEY or not APP_SECRET) and os.path.exists(kis_config_path):
     try:
-        with open(kis_config_path, "r", encoding="utf-8") as f:
+        with open(kis_config_path, encoding="utf-8") as f:
             config = json.load(f)
             APP_KEY = APP_KEY or config.get("app_key")
             APP_SECRET = APP_SECRET or config.get("app_secret")
@@ -124,7 +124,7 @@ def _read_marker():
     """전송 마커(sent_marker.json) 전체를 dict 로 읽는다. 없으면 빈 dict."""
     try:
         if os.path.exists(SENT_MARKER_FILE):
-            with open(SENT_MARKER_FILE, "r", encoding="utf-8") as f:
+            with open(SENT_MARKER_FILE, encoding="utf-8") as f:
                 return json.load(f) or {}
     except Exception:
         pass
@@ -170,7 +170,8 @@ def wait_until_send_time(target_hm, max_wait_min=40):
     wait_s = (target - now).total_seconds()
     if 0 < wait_s <= max_wait_min * 60:
         print(
-            f"  ⏲ 목표 전송시각 {target_hm // 100:02d}:{target_hm % 100:02d} KST 까지 약 {int(wait_s)}초 대기 후 전송..."
+            f"  ⏲ 목표 전송시각 {target_hm // 100:02d}:{target_hm % 100:02d} KST 까지 "
+            f"약 {int(wait_s)}초 대기 후 전송..."
         )
         time.sleep(wait_s)
 
@@ -229,9 +230,10 @@ def safe_float(val, default=0.0):
 
 
 def send_telegram_message(message):
-    import requests
-    import os
     import json
+    import os
+
+    import requests
 
     print("💬 텔레그램 메시지 전송 중...")
 
@@ -243,7 +245,7 @@ def send_telegram_message(message):
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "telegram_config.json")
     if (not bot_token or not chat_id) and os.path.exists(config_path):
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
                 bot_token = bot_token or config.get("bot_token")
                 chat_id = chat_id or config.get("chat_id")
@@ -288,7 +290,7 @@ def get_token(deadline_hm=None, max_attempts=4):
     """
     if os.path.exists(CACHE_FILE):
         try:
-            with open(CACHE_FILE, "r") as f:
+            with open(CACHE_FILE) as f:
                 cache = json.load(f)
             mtime = os.path.getmtime(CACHE_FILE)
             if time.time() - mtime < 20 * 3600:
@@ -463,7 +465,7 @@ def load_fx_cache():
     """일별 환율 캐시(fx_cache.json) 로드: { "YYYY-MM-DD": t_rate } 형태."""
     if os.path.exists(FX_CACHE_FILE):
         try:
-            with open(FX_CACHE_FILE, "r", encoding="utf-8") as f:
+            with open(FX_CACHE_FILE, encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             pass
@@ -494,7 +496,7 @@ def load_dprt_cache():
     """
     if os.path.exists(DPRT_CACHE_FILE):
         try:
-            with open(DPRT_CACHE_FILE, "r", encoding="utf-8") as f:
+            with open(DPRT_CACHE_FILE, encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             pass
@@ -506,10 +508,10 @@ def save_dprt_today(open_dprt=None, close_dprt=None):
 
     open_dprt/close_dprt 는 % 단위. 유효한 값만 갱신(없으면 기존 값 보존).
     """
-    if (open_dprt is None or open_dprt == 0.0) and (close_dprt is None or close_dprt == 0.0):
-        # 둘 다 없으면 저장 생략 (단, 0.0 자체가 의미있는 경우는 드물어 가드)
-        if open_dprt is None and close_dprt is None:
-            return
+    # 둘 다 없으면 저장 생략. 바깥 조건(0.0 포함)은 «0.0 자체가 의미있는 경우는 드물다» 는
+    # 가드였는데, 안쪽 «둘 다 None» 이 참이면 바깥도 반드시 참이라 한 조건으로 합쳤다(동작 동일).
+    if open_dprt is None and close_dprt is None:
+        return
     kst_tz = datetime.timezone(datetime.timedelta(hours=9))
     today = datetime.datetime.now(kst_tz).strftime("%Y-%m-%d")
     cache = load_dprt_cache()
@@ -1181,7 +1183,7 @@ def compute_accuracy(predicted_open, prev_close, actual_open):
         return None, None, None
     if pred <= 0 or act <= 0:
         return None, None, None
-    err_won = int(round(pred - act))
+    err_won = round(pred - act)
     err_pct = round((pred - act) / act * 100, 3)
 
     dir_hit = None
@@ -1240,7 +1242,7 @@ def read_accuracy_log():
     try:
         if not os.path.exists(ACCURACY_LOG_FILE):
             return []
-        with open(ACCURACY_LOG_FILE, "r", encoding="utf-8", newline="") as f:
+        with open(ACCURACY_LOG_FILE, encoding="utf-8", newline="") as f:
             return list(csv.DictReader(f))
     except Exception as e:
         print(f"  ⚠ 정확도 로그 읽기 실패(로깅만 영향): {e}")
@@ -1286,8 +1288,8 @@ def append_accuracy_row(date_str, source, predicted_open, prev_close, note=""):
                 "date": date_str,
                 "weekday": wd,
                 "source": source,
-                "predicted_open": int(round(float(predicted_open))),
-                "prev_close": int(round(float(prev_close))) if prev_close else "",
+                "predicted_open": round(float(predicted_open)),
+                "prev_close": round(float(prev_close)) if prev_close else "",
                 "actual_open": "",
                 "err_won": "",
                 "err_pct": "",
@@ -1296,7 +1298,7 @@ def append_accuracy_row(date_str, source, predicted_open, prev_close, note=""):
             }
         )
         if write_accuracy_log(rows):
-            _pred_int = int(round(float(predicted_open)))
+            _pred_int = round(float(predicted_open))
             print(f"  🧾 정확도 로그 append: {date_str} · {source} · 예상 {_pred_int:,}원")
     except Exception as e:
         print(f"  ⚠ 정확도 로그 append 실패(로깅만 영향, 발송엔 무관): {e}")
@@ -1408,7 +1410,7 @@ def backfill_accuracy_log(token=None, today_kst_str=None):
             err_won, err_pct, dir_hit = compute_accuracy(
                 r.get("predicted_open"), r.get("prev_close"), actual
             )
-            r["actual_open"] = int(round(actual))
+            r["actual_open"] = round(actual)
             r["err_won"] = "" if err_won is None else err_won
             r["err_pct"] = "" if err_pct is None else err_pct
             r["dir_hit"] = "" if dir_hit is None else dir_hit
@@ -1416,7 +1418,7 @@ def backfill_accuracy_log(token=None, today_kst_str=None):
             _dir_txt = "적중" if dir_hit == 1 else "빗나감" if dir_hit == 0 else "N/A"
             _err_txt = "N/A" if err_won is None else f"{err_won:+}원 · {err_pct:+.2f}%"
             print(
-                f"  🧾 백필: {date_str} 실제시가 {int(round(actual)):,}원 "
+                f"  🧾 백필: {date_str} 실제시가 {round(actual):,}원 "
                 f"(오차 {_err_txt} · 방향 {_dir_txt})"
             )
 
@@ -1436,7 +1438,10 @@ def main():
         "--mode",
         choices=["auto", "live", "after"],
         default="auto",
-        help="예측 모드 (auto: 한국 장중/장후 자동판정, live: KIS iNAV 직접 사용, after: 미국가×고정비중 익영업일 예측)",
+        help=(
+            "예측 모드 (auto: 한국 장중/장후 자동판정, live: KIS iNAV 직접 사용, "
+            "after: 미국가×고정비중 익영업일 예측)"
+        ),
     )
     parser.add_argument("--force", action="store_true", help="미국 휴장 시 강제 실행")
     parser.add_argument("--no-telegram", action="store_true", help="텔레그램 메시지 전송 생략")
@@ -1470,7 +1475,7 @@ def main():
     )
 
     # support running via run_simulator.bat which doesn't pass args, handle unknown args
-    args, unknown = parser.parse_known_args()
+    args, _unknown = parser.parse_known_args()
 
     force_execution = args.force or "--force" in sys.argv
     no_telegram = (
@@ -1504,10 +1509,7 @@ def main():
         today_kst_str = now_kst.strftime("%Y-%m-%d")
         # 대기 동안 정규장 진입 여부가 바뀔 수 있으므로 mode 판정 직전 시각 기준으로 재계산.
         kr_regular_open = is_korea_market_open(now_kst)
-    if args.mode == "auto":
-        mode = "live" if kr_regular_open else "after"
-    else:
-        mode = args.mode
+    mode = ("live" if kr_regular_open else "after") if args.mode == "auto" else args.mode
 
     mode_label = (
         "장중(KIS iNAV 직접)" if mode == "live" else "장후/새벽(미국가×고정비중 익영업일 예측)"
@@ -1651,11 +1653,11 @@ def main():
         #   불변식: 발송목표(--send-at) < 폴링 데드라인 < 토큰 마감(get_token deadline_hm).
         _poll_deadline = now_kst.replace(hour=8, minute=44, second=0, microsecond=0)
         _poll_try = 1
-        print(f"  ⏳ antc_cnpr 아직 0/미생성 — 동시호가 폴링 시작 (데드라인 08:44 KST, 15초 간격)")
+        print("  ⏳ antc_cnpr 아직 0/미생성 — 동시호가 폴링 시작 (데드라인 08:44 KST, 15초 간격)")
         while True:
             _now = datetime.datetime.now(kst_tz_antc)
             if _now >= _poll_deadline:
-                print(f"  ⏳ 폴링 데드라인(08:44) 도달 — antc_cnpr 끝내 미확보, 폴백으로 진행.")
+                print("  ⏳ 폴링 데드라인(08:44) 도달 — antc_cnpr 끝내 미확보, 폴백으로 진행.")
                 break
             time.sleep(15)
             _poll_try += 1
@@ -1880,8 +1882,8 @@ def main():
         nav_err_pct = (nav_err / predicted_nav * 100) if predicted_nav else 0.0
         print(f"  오차               : {nav_err:>+8,.0f}원  ({nav_err_pct:+.2f}%)")
     else:
-        print(f"  실제 ETF NAV       : 미공시 (장후 예측 또는 업데이트 지연)")
-        print(f"  오차               : N/A")
+        print("  실제 ETF NAV       : 미공시 (장후 예측 또는 업데이트 지연)")
+        print("  오차               : N/A")
 
     print("-" * 50)
     print(f"  [📈 {target_date_str} 주가 시뮬레이션 결과]")
@@ -1893,8 +1895,8 @@ def main():
         etf_err_pct = (etf_err / predicted_etf * 100) if predicted_etf else 0.0
         print(f"  오차               : {etf_err:>+8,.0f}원  ({etf_err_pct:+.2f}%)")
     else:
-        print(f"  실제 ETF 현재가    : 미공시 (장후 예측 또는 업데이트 지연)")
-        print(f"  오차               : N/A")
+        print("  실제 ETF 현재가    : 미공시 (장후 예측 또는 업데이트 지연)")
+        print("  오차               : N/A")
 
     # 개장 시가 예측.
     #   ★ 메인: KIS 예상체결가(antc_cnpr) — 장전 동시호가(8:30~09:00) 동안 시장이 만든 예상 시가.
@@ -1959,34 +1961,52 @@ def main():
         elif open_discount <= -1.0:
             decision_msg = "시장 예상가가 공정가치(예측 NAV) 대비 저평가 — 다소 낮게(할인) 출발 (시장 동시호가 기준)."
         elif open_discount >= 1.0:
-            decision_msg = "시장 예상가가 공정가치(예측 NAV) 대비 고평가 — 다소 높게(프리미엄) 출발 (시장 동시호가 기준)."
+            decision_msg = (
+                "시장 예상가가 공정가치(예측 NAV) 대비 고평가 — 다소 높게(프리미엄) 출발 (시장 동시호가 "
+                "기준)."
+            )
         else:
             decision_msg = "시장 예상가가 공정가치(예측 NAV) 부근(괴리 작음)에서 출발 전망 (시장 동시호가 기준)."
     else:
         nav_change = (predicted_nav - base_nav) / base_nav * 100 if base_nav else 0.0
         if nav_change <= -3.0:
-            decision_msg = "간밤 기초자산·환율 약세로 공정가치가 전일보다 크게 낮아짐 → 큰 폭 하락 출발 전망 (시장 예상가 미확보·모델 추정)."
+            decision_msg = (
+                "간밤 기초자산·환율 약세로 공정가치가 전일보다 크게 낮아짐 → 큰 폭 하락 출발 전망 (시장 예상가 "
+                "미확보·모델 추정)."
+            )
         elif nav_change <= -1.0:
-            decision_msg = "간밤 기초자산·환율 영향으로 공정가치가 다소 낮아짐 → 약세 출발 전망 (시장 예상가 미확보·모델 추정)."
+            decision_msg = (
+                "간밤 기초자산·환율 영향으로 공정가치가 다소 낮아짐 → 약세 출발 전망 (시장 예상가 "
+                "미확보·모델 추정)."
+            )
         elif nav_change >= 3.0:
-            decision_msg = "간밤 기초자산·환율 강세로 공정가치가 전일보다 크게 높아짐 → 큰 폭 상승 출발 전망 (시장 예상가 미확보·모델 추정)."
+            decision_msg = (
+                "간밤 기초자산·환율 강세로 공정가치가 전일보다 크게 높아짐 → 큰 폭 상승 출발 전망 (시장 예상가 "
+                "미확보·모델 추정)."
+            )
         elif nav_change >= 1.0:
-            decision_msg = "간밤 기초자산·환율 영향으로 공정가치가 다소 높아짐 → 강세 출발 전망 (시장 예상가 미확보·모델 추정)."
+            decision_msg = (
+                "간밤 기초자산·환율 영향으로 공정가치가 다소 높아짐 → 강세 출발 전망 (시장 예상가 "
+                "미확보·모델 추정)."
+            )
         else:
-            decision_msg = "간밤 기초자산·환율 변동이 작아 공정가치가 전일과 비슷함 → 보합 출발 전망 (시장 예상가 미확보·모델 추정)."
+            decision_msg = (
+                "간밤 기초자산·환율 변동이 작아 공정가치가 전일과 비슷함 → 보합 출발 전망 (시장 예상가 "
+                "미확보·모델 추정)."
+            )
 
     print("-" * 50)
     if expected_open_valid:
         print(f"  [📈 {target_date_str} 개장 시가 — KIS 예상체결가(장전 동시호가) 기반]")
-        print(f"  * 예상체결가는 09:00 확정 전까지 변동 가능(08:50경 더 정확).")
+        print("  * 예상체결가는 09:00 확정 전까지 변동 가능(08:50경 더 정확).")
         print(f"  - 예상 시가(antc_cnpr) : {expected_open:>8,.0f}원  (전일대비 {antc_ctrt:+.2f}%)")
         print(f"  - 공정가치(예측 NAV)   : {predicted_nav:>8,.0f}원")
         print(f"  - 예상 괴리율          : {open_discount:>+7.2f}%  ({discount_basis})")
         print(f"  - 정밀 범위            : {open_lower:>8,.0f}원 ~ {open_upper:>8,.0f}원 (±25원)")
     else:
         print(f"  [📈 {target_date_str} 개장 시가 — 동시호가 전·외(참고 추정)]")
-        print(f"  * 시장 예상체결가(antc_cnpr) 없음 → 괴리율 기반 개장 할인 모델로 참고 추정.")
-        print(f"  * NQ 야간선물 시나리오는 KIS 해외선물 권한 미보유로 제거.")
+        print("  * 시장 예상체결가(antc_cnpr) 없음 → 괴리율 기반 개장 할인 모델로 참고 추정.")
+        print("  * NQ 야간선물 시나리오는 KIS 해외선물 권한 미보유로 제거.")
         print(f"  - 공정가치(예측 NAV)   : {predicted_nav:>8,.0f}원")
         print(f"  - 추정 개장할인율      : {open_discount:>+7.2f}%  (근거: {discount_basis})")
         print(f"  - 예상 기준가          : {open_nav_track:>8,.0f}원")
@@ -1995,7 +2015,7 @@ def main():
         )
 
     print("-" * 50)
-    print(f"  [🎯 최종 시가 예측 요약]")
+    print("  [🎯 최종 시가 예측 요약]")
     print(f"  - 오늘의 예측 시가   : {predicted_open:>8,.0f}원")
     print(f"  - 초정밀 범위 (±25원) : {open_lower:>8,.0f}원 ~ {open_upper:>8,.0f}원")
     print(f"  - 채택된 방식         : {scenario_name}")
@@ -2014,7 +2034,7 @@ def main():
         sorted_holdings = sorted(active_holdings.items(), key=lambda x: x[1], reverse=True)
         top_holdings = sorted_holdings[:3]
         holdings_parts = []
-        for ticker, weight in top_holdings:
+        for ticker, _weight in top_holdings:
             ret = stock_returns.get(ticker, 0.0)
             p_to = latest_prices.get(ticker, 0.0)
             name = KOREAN_NAMES.get(ticker, ticker)
@@ -2107,7 +2127,8 @@ def main():
             elif _gate == "send_fallback_late":
                 # ③ 뒤늦은 cron 백업 실행 — 창 닫힌 후 도착한 실행이 최후 1회 전송
                 print(
-                    "  ⏳ 동시호가 창(08:30~09:00) 종료·예상체결가 못 받음 → 폴백 추정으로 최후 1회 전송(메시지 누락 방지)."
+                    "  ⏳ 동시호가 창(08:30~09:00) 종료·예상체결가 못 받음 → "
+                    "폴백 추정으로 최후 1회 전송(메시지 누락 방지)."
                 )
                 if send_telegram_message(telegram_msg):
                     write_auction_sent_today(today_kst_str, us_date=d1)

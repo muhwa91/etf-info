@@ -1,3 +1,4 @@
+import contextlib
 import sys
 
 # KIS 단독 시뮬레이터의 비중 상수·미국 일별 데이터 함수를 재사용한다.
@@ -9,10 +10,8 @@ from tiger_etf_simulator import (
 
 # Windows UTF-8 encoding setup
 if sys.stdout.encoding != 'utf-8':
-    try:
+    with contextlib.suppress(AttributeError):
         sys.stdout.reconfigure(encoding='utf-8')
-    except AttributeError:
-        pass
 
 def main():
     print("🎯 수요일(6/17) 실제 공시 NAV 기준 예측 정확도 검증 프로그램\n")
@@ -28,7 +27,7 @@ def main():
     d0 = "2026-06-15"  # 월요일 US 종가
     d1 = "2026-06-16"  # 화요일 US 종가
 
-    print(f"📊 [검증 기간 설정]")
+    print("📊 [검증 기간 설정]")
     print(f"  - 기초자산 주가 변동: {d0} 종가 → {d1} 종가")
     print(f"  - 기준일 ETF NAV ({d1}): {nav_base:,}원")
     print(f"  - 목표일 실제 NAV (2026-06-17): {nav_actual:,}원\n")
