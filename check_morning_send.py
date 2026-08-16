@@ -1,4 +1,4 @@
-"""아침 발송 정상성 감시 — **이상할 때만** 디스코드·텔레그램으로 알린다.
+"""아침 발송 정상성 감시 — **이상할 때만** 텔레그램(감시 봇)으로 알린다.
 
 운영자가 실제로 신경 쓰는 건 "아침에 텔레그램이 제때 오느냐"다. `antc_cnpr` 생성 여부는 그 안의
 재료일 뿐이고, 3회 연속 미생성처럼 매일 같은 값이면 알림이 소음이 된다(브리지 규칙:
@@ -9,10 +9,12 @@
 침묵(정상): 주실행 성공 + 발송됨 + 시각 정상. **antc 미확보로 인한 08:44 발송은 설계된
 폴백이므로 정상**이다 — 대신 알림이 나갈 때 antc 상태를 참고 정보로 함께 싣는다.
 
-여기서는 **발송 = 이상**이므로 알리는 모든 건을 텔레그램(수신 전용)에도 보낸다. 두 경로는
-서로 독립이다 — 디스코드가 401 로 죽어도 텔레그램은 나가고, 그 반대도 같다. 다만 **둘 중
-하나라도 실패(미설정 포함)하면 종료코드 1** 로 러너를 붉게 만든다 — 조용한 전송 실패는
+여기서는 **발송 = 이상**이므로 알리는 모든 건을 텔레그램(수신 전용 감시 봇)으로 보낸다.
+**전송이 실패(미설정 포함)하면 종료코드 1** 로 러너를 붉게 만든다 — 조용한 전송 실패는
 감시가 없는 것과 같고, 실제로 그렇게 놓쳤다(2026-08-12: 디스코드 401 이 묻히고 워크플로는 초록).
+⚠️ **디스코드 발송은 2026-08-16 운영자 지시로 제거됐다**(「한 알림은 한 곳으로」 기준). 그 사고를
+실제로 막은 것은 이중 발신이 아니라 **위 종료코드 규칙**이었다 — 이중화는 «둘 다 조용한 것»을
+못 잡는다. 침묵 감지가 필요하면 채널을 늘리지 말고 생존 신호를 붙인다(오라클 🕒 방식).
 
 판정 마커는 tiger_etf_simulator.py 가 실제로 찍는 문구이고, 2026-08-07·08-10·08-11 실 로그로
 대조했다. 설정은 환경변수(GitHub Secrets)로 주입 — 코드/로그/메시지에 비밀 미노출.
@@ -211,8 +213,8 @@ def kdate(d):
 def build_message(problems, infos, day, repo):
     """이상 판정 → 알림 메시지. 정상(problems 비었음)이면 None(= 발신 안 함).
 
-    디스코드·텔레그램이 같은 본문을 쓴다 — 마크업은 `to_plain` 이 벗기므로
-    텔레그램에서는 `**` 없는 모습이 그대로 개발자가 확정한 형식이다.
+    본문에 마크업(`**`·`` ` ``)을 쓰되 `to_plain` 이 벗기므로, 폰에 뜨는 `**` 없는 모습이
+    그대로 개발자가 확정한 형식이다.
     """
     if not problems:
         return None
@@ -229,36 +231,12 @@ def build_message(problems, infos, day, repo):
     return "\n".join(lines)
 
 
-def notify(msg):
-    """디스코드 전송. 실패는 삼키되 반드시 로그에 남긴다(조용한 401 이 감시를 무력화한다)."""
-    token = os.environ.get("DISCORD_BOT_TOKEN", "")
-    channel = os.environ.get("DISCORD_CHANNEL", "")
-    if not token or not channel:
-        print("notify failed: DISCORD_BOT_TOKEN/DISCORD_CHANNEL 미설정")
-        return False
-    uid = os.environ.get("DISCORD_USER_ID", "")
-    content = (f"<@{uid}> " if uid else "") + msg  # 알림은 전부 이상 상황이라 항상 멘션
-    req = urllib.request.Request(
-        f"https://discord.com/api/v10/channels/{channel}/messages",
-        data=json.dumps({"content": content}).encode(),
-        headers={
-            "Authorization": f"Bot {token}",
-            "Content-Type": "application/json",
-            # User-Agent 필수 — 없으면 Cloudflare 1010 으로 전량 차단된다(실증).
-            "User-Agent": "DiscordBot (https://github.com/muhwa91, 1.0)",
-        },
-        method="POST",
-    )
-    try:
-        urllib.request.urlopen(req, timeout=15)
-        return True
-    except Exception as e:
-        print(f"notify failed: {type(e).__name__}: {e}")
-        return False
-
+# ⛔ 디스코드 전송(notify)은 2026-08-16 제거 — 되살리지 마라. 기준·이유는 위 모듈 docstring 과
+# `Hachiware/_Project/_Alerts/telegram.md` 맨 위(「한 알림은 한 곳으로」).
 
 # `\s` 를 쓰면 개행까지 먹어 '-#\n다음 줄' 이 한 줄로 합쳐진다 → 같은 줄의 공백만([ \t]).
-_MD = re.compile(r"\*\*|`|^-#[ \t]*", re.M)  # 디스코드 전용 마크업(굵게·코드·서브텍스트)
+# ⚠️ 마크업 제거는 **계속 필요하다** — build_message 가 `**`·`` ` `` 를 쓰고 tg() 가 이걸로 벗긴다.
+_MD = re.compile(r"\*\*|`|^-#[ \t]*", re.M)  # 옛 디스코드 마크업(굵게·코드·서브텍스트)
 
 
 def to_plain(text):
@@ -288,7 +266,8 @@ def mask(text, secret):
 def tg(msg):
     """텔레그램 전송(수신 전용 봇). 실패는 삼키되 반드시 로그에 남긴다.
 
-    디스코드 notify() 와 **독립** — 한쪽이 실패해도 다른 쪽은 그대로 시도된다.
+    2026-08-16 부터 **유일한 발신 경로**다(디스코드 notify() 제거). 실패하면 알림이 통째로
+    사라지므로 main() 이 종료코드 1 로 러너를 붉게 만든다.
     """
     token = os.environ.get("TELEGRAM_DEV_BOT_TOKEN", "")
     chat = os.environ.get("TELEGRAM_DEV_CHAT_ID", "")
@@ -354,7 +333,7 @@ def collect():
 
 
 def selftest():
-    """실제 로그 문구를 픽스처로 판정 로직만 검증(gh·디스코드 호출 없음)."""
+    """실제 로그 문구를 픽스처로 판정 로직만 검증(gh·텔레그램 호출 없음)."""
 
     def ln(hms, text):  # gh run view --log 한 줄: job\tstep\t<UTC ts> <내용>
         return f"run\tETF 시뮬레이터 실행\t2026-08-10T{hms}.1234567Z   {text}"
@@ -574,14 +553,11 @@ def main():
         os.environ.get("GITHUB_REPOSITORY", ""),
     )
     print(body)
-    # 두 전송은 서로 독립이다 — 디스코드 성패와 무관하게 텔레그램도 항상 시도한다
-    # (단축평가로 한쪽을 건너뛰면 안 되므로 각각 호출한 뒤에 합친다).
-    ok = notify(body)
-    tg_ok = tg(body)
-    if not (ok and tg_ok):
+    # 행선지는 텔레그램 감시 봇 하나다(2026-08-16 — 디스코드 발송 제거).
+    if not tg(body):
         # 전송 실패는 러너를 붉게 만든다 — 조용한 실패는 감시가 없는 것과 같다.
-        # tg() 는 시크릿 미설정도 False 로 준다. 텔레그램은 백업 채널로 실제 등록해 뒀으므로
-        # 미설정 = 백업 없음이고, 그건 정확히 알아야 할 신호다 → 실패와 똑같이 붉게 둔다.
+        # tg() 는 시크릿 미설정도 False 로 준다. 미설정 = 알림 경로 없음이고, 그건 정확히
+        # 알아야 할 신호다 → 실패와 똑같이 붉게 둔다.
         sys.exit(1)
 
 
