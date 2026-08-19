@@ -17,3 +17,20 @@ logs/sessions.log
 node_modules/
 .clasprc.json
 apps_script/.clasprc.json
+
+# ── 내부 문서·설정 차단 (2026-08-19 신설) ──────────────────────────
+# 이 레포는 비공개 모노레포에서 **큐레이션되어** 나온다. 아래는 그 큐레이션이 실수해도
+# 커밋 자체가 안 되게 하는 1차 방어선이다. 종전에는 방어가 **pre-push 훅 하나뿐**이라,
+# `git add -A` 한 번이면 내부 문서가 커밋까지 성공하고 push 에서만 막혔다
+# (그 상태에서 `--no-verify`·`SKIP_NAME_GUARD=1` 로 넘기면 그대로 유출).
+# 계기: 2026-08-19 에 `docs/개발/함정.md` 를 신설했는데 그 경로를 막는 줄이 없었다.
+docs/개발/
+docs/기능/
+.claude/
+CLAUDE.md
+logs/작업일지.md
+# 비밀값 — 공개용 견본만 남긴다.
+.env
+.env.*
+!.env.example
+!.env.sample
