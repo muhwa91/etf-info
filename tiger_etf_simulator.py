@@ -2150,6 +2150,37 @@ def main():
     except Exception as e:
         print(f"  ❌ 텔레그램 전송 준비 중 오류 발생: {e}")
 
+    # ── 진단(2026-08-19 한시) — antc_cnpr 공표 «개시 시각» 실측 ─────────────────
+    #   왜: 08:40~08:44 폴링이 2거래일 연속 빈손인데(17회 × 2일), 이 파일에 남은 유일한
+    #   성공 관측은 위 폴링 주석의 **08:54** 뿐이다. 개시 시각이 08:44 이후인 것은 확실한데
+    #   **정확히 언제인지는 아무도 모른다.** 발송 시각을 또 추측으로 옮기면 08:30 → 08:40 에
+    #   이은 **세 번째 실패**가 난다(그때마다 한 달이 든다). 한 아침만 재고 끝낸다.
+    #   🔴 **전송이 끝난 뒤에만 돈다 — 알림 도착 시각에 영향이 없다.** 값을 찾으면 즉시 멈춘다.
+    #   ⚠️ 워크플로 timeout-minutes(35 · 08:24 기동 → 08:59) 안에 끝나야 해 **08:56 하드 상한**이다.
+    #   ✅ **걷어낼 조건**: 개시 시각이 한 번 찍히면 이 블록을 통째로 지우고 그 값으로
+    #      PREOPEN_ANTC_START_HM·폴링 데드라인을 다시 세운다(시각 상수 5곳 불변식을 함께 볼 것).
+    try:
+        _kst = datetime.timezone(datetime.timedelta(hours=9))
+        _now = datetime.datetime.now(_kst)
+        if auction_only and _now.weekday() < 5 and 844 <= _now.hour * 100 + _now.minute < 856:
+            _limit = _now.replace(hour=8, minute=56, second=0, microsecond=0)
+            print("\n🔬 [진단] antc_cnpr 공표 개시 시각 실측 — 30초 간격 · 08:56 상한 (전송 후라 알림 무영향)")
+            while datetime.datetime.now(_kst) < _limit:
+                _a = get_etf_expected_open(token)
+                _hms = datetime.datetime.now(_kst).strftime("%H:%M:%S")
+                if _a is not None and _a.get("antc_cnpr", 0) > 0:
+                    print(
+                        f"  🔬 최초 확보 {_hms} — antc_cnpr={_a['antc_cnpr']:,.0f}원 "
+                        f"예상거래량={_a['antc_vol']:,.0f}주"
+                    )
+                    break
+                print(f"  🔬 {_hms} 아직 빈값")
+                time.sleep(30)
+            else:
+                print("  🔬 08:56 까지도 미확보 — 「08:54 면 나온다」는 관측부터 다시 세울 것")
+    except Exception as _e:  # 진단이 본 작업을 죽이지 않게(전송은 이미 끝났다)
+        print(f"  🔬 [진단] 건너뜀({type(_e).__name__}) — 본 작업에는 영향 없다")
+
 
 if __name__ == "__main__":
     main()
