@@ -4,13 +4,13 @@
 ![Apps Script](https://img.shields.io/badge/Apps_Script-4285F4?logo=googleappsscript&logoColor=white)
 ![Telegram](https://img.shields.io/badge/Telegram-26A5E4?logo=telegram&logoColor=white)
 
-> 미국 우주테크 종목과 환율을 추적해 **TIGER 미국우주테크 ETF(`0183J0`)의 그날 예상 시가를 개장 전 아침 08:40에 텔레그램으로 알려주는** 개인용 예측 스크립트.
+> 미국 우주테크 종목과 환율을 추적해 **TIGER 미국우주테크 ETF(`0183J0`)의 그날 예상 시가를 개장 전 아침 08:51에 텔레그램으로 알려주는** 개인용 예측 스크립트.
 
 <!-- 스크린샷: 텔레그램 발송 메시지 (추후) -->
 
 동시호가에서 KIS 예상체결가를 수집해 예상 시가를 발송하고, 다음 실행에서 실제 시가와 대조해 정확도를 자기평가한다.
 
-## 발송 흐름 (아침 08:40 예상 시가)
+## 발송 흐름 (아침 08:51 예상 시가)
 
 ```mermaid
 sequenceDiagram
@@ -20,8 +20,8 @@ sequenceDiagram
   participant KIS
   participant TG as Telegram
   GAS->>GHA: workflow_dispatch (08:20~08:32)
-  GHA->>Sim: python ... --auction-only --send-at 0830
-  Sim->>Sim: 중복전송 마커 확인 · 08:40까지 대기
+  GHA->>Sim: python ... --auction-only --send-at 0851
+  Sim->>Sim: 중복전송 마커 확인 · 08:51까지 대기
   Sim->>KIS: 토큰 · antc_cnpr(예상체결가) 수집
   alt 예상체결가 유효
     Sim->>TG: 예상 시가 발송 + 마커 기록
@@ -49,7 +49,7 @@ python tiger_etf_simulator.py     # 현재 시장 상태에 맞춰 자동 판정
 
 | 기능 | 설명 |
 |---|---|
-| 장전 예상 시가 알림 | 평일 08:40(KRX 예상체결가 공표 개시)에 KIS 예상체결가(`antc_cnpr`)를 수집해 그날 시가를 예측·발송(하루 1회) |
+| 장전 예상 시가 알림 | 평일 08:51(공표 개시 08:50 + 1분)에 KIS 예상체결가(`antc_cnpr`)를 수집해 그날 시가를 예측·발송(하루 1회) |
 | 장중 iNAV 괴리 확인 | 정규장(09:00~15:30)엔 KIS iNAV로 실시간 NAV·괴리율 비교(`live` 모드) |
 | 시간대 모드 자동 전환 | 장중(실시간 비교) ↔ 장후/새벽(익영업일 예측) 자동 정렬 |
 | 정확도 자기평가 | 발송 예측치를 실제 시가와 대조해 오차율·방향 적중을 `accuracy_log.csv`에 누적 |
@@ -74,7 +74,7 @@ GitHub Actions cron은 정시 발화를 보장하지 못한다(실측 08:30 지�
 ## 자동 실행
 
 - **주 경로**: GAS 알람([apps_script/](apps_script/)) — 평일 08:20~08:32 GitHub 워크플로를 `workflow_dispatch`로 깨움
-- **백업**: GitHub Actions cron 2회 (08:50·09:05 KST) — GAS 가 못 깨웠을 때만 의미가 있다
+- **백업**: GitHub Actions cron 2회 (08:57·09:05 KST) — GAS 가 못 깨웠을 때만 의미가 있다
 
 ## 테스트 · 린트
 

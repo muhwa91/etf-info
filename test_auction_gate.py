@@ -9,11 +9,15 @@ ETF 전송 게이트 회귀 방지 단위 테스트
              반드시 send_fallback_primary 반환 → 절대 skip 되지 않는다.
 """
 
+import os
+import re
 import unittest
 
 # 모듈 최상단에서 환경변수·파일 접근은 있으나 네트워크 호출은 없음.
-# if __name__ == "__main__" 가드(1336번 줄)로 main() 자동 실행 없음 → import 안전.
+# if __name__ == "__main__" 가드로 main() 자동 실행 없음 → import 안전.
+import check_morning_send
 from tiger_etf_simulator import (
+    PREOPEN_ANTC_START_HM,
     SESSION,
     build_naver_auction_message,
     compute_accuracy,
@@ -120,7 +124,7 @@ class TestDecideAuctionSend(unittest.TestCase):
     # --- 우선순위 ④ 모두 False → skip ---
 
     def test_skip_all_false(self):
-        """valid=False, primary=False, window=False → skip(08:30 전 조기 실행만)."""
+        """valid=False, primary=False, window=False → skip(공표 개시 08:50 전 조기 실행만)."""
         self.assertEqual(
             decide_auction_send(
                 expected_open_valid=False,
@@ -193,7 +197,7 @@ class TestShouldPollAuction(unittest.TestCase):
         )
 
     def test_not_in_preopen_auction_blocks_poll(self):
-        """동시호가 시간대 아님(08:30 이전 또는 09:00 이후) → False."""
+        """공표 구간 아님(08:50 이전 또는 09:00 이후) → False."""
         self.assertFalse(
             should_poll_auction(
                 auction_only=True,
@@ -499,6 +503,98 @@ class TestSessionRetry(unittest.TestCase):
         """즉시 3연타는 같은 장애에 그대로 당한다 → 지수 백오프가 있어야 한다."""
         for retry in self._retries():
             self.assertGreater(retry.backoff_factor, 0)
+
+
+# ---------------------------------------------------------------------------
+# 시각 상수 6곳 불변식 — 하나만 고치면 조용히 깨지는 자리
+# ---------------------------------------------------------------------------
+class TestTimeConstantInvariant(unittest.TestCase):
+    """공표개시 ≤ 발송목표 < 폴링데드라인 < 토큰마감 < LATE_HM ≤ 백업cron.
+
+    두 번 깨졌고 두 번 다 «한 달치 antc 0건» 으로 나타났다(2026-08-13 · 2026-08-19).
+    상수가 3개 파일(시뮬레이터·감시·워크플로)에 흩어져 있어 리뷰로는 안 잡힌다 —
+    소스에서 직접 읽어 순서를 본다.
+
+    🔴 **읽는 값은 «프로덕션이 실제로 쓰는 것»이어야 한다** — argparse 기본값만 보면
+    워크플로 인자(`--send-at`)가 그 기본값을 덮어써도 초록으로 통과한다(2026-08-21 점검 지적).
+    """
+
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    _FLOW = os.path.abspath(
+        os.path.join(_HERE, "..", "..", "..", ".github", "workflows", "etf_simulator.yml")
+    )
+    # 🔴 `run:` 줄에 앵커한다 — 그냥 `--send-at (\d{4})` 로 두면 **머리말 주석의 예시**가 먼저
+    #   잡혀서, 주석만 고치면 실패하고 **정작 프로덕션 인자를 되돌리면 통과하는** 정반대가 된다
+    #   (2026-08-21 재점검에서 뮤테이션으로 드러났다 — 첫 판이 실제로 그 상태였다).
+    _SEND_AT_RE = r"^\s*run:.*--send-at (\d{4})"
+
+    def _need_workflow(self):
+        """워크플로를 읽는 검사에서만 부른다.
+
+        공개 미러(플랫 레포)에는 `.github/workflows` 가 없어 그냥 열면 `FileNotFoundError` 로
+        **크래시**한다(단언 실패가 아니다). ⚠️ 이걸 `setUp` 에 두지 마라 — 워크플로가 필요 없는
+        검사(실측치 못박기·마커 대조)까지 같이 건너뛰어, 미러에서 **잡을 수 있는 회귀를 놓친다.**
+        """
+        if not os.path.exists(self._FLOW):
+            self.skipTest("모노레포 밖(공개 미러) — .github/workflows 없음")
+
+    def _grab(self, path, pattern):
+        with open(path, encoding="utf-8") as f:
+            m = re.search(pattern, f.read(), re.M)
+        self.assertIsNotNone(m, f"{os.path.basename(path)} 에서 {pattern} 를 못 찾았다")
+        return int(m.group(1))
+
+    def test_invariant_chain(self):
+        self._need_workflow()
+        sim = os.path.join(self._HERE, "tiger_etf_simulator.py")
+        watch = os.path.join(self._HERE, "check_morning_send.py")
+
+        send_at = self._grab(self._FLOW, self._SEND_AT_RE)  # 🔴 프로덕션 실인자
+        default_at = self._grab(sim, r'"--send-at",\s*\n\s*default="(\d{4})"')
+        poll = 800 + self._grab(sim, r"_poll_deadline = now_kst\.replace\(hour=8, minute=(\d+)")
+        token = self._grab(sim, r"get_token\(deadline_hm=(\d+)\)")
+        late = self._grab(watch, r"^LATE_HM = (\d+)$")
+        cron = 800 + self._grab(self._FLOW, r"cron: '(\d+) 23 ")  # UTC 23시대 = KST 08시대
+
+        self.assertEqual(send_at, default_at, "워크플로 인자와 argparse 기본값이 갈렸다")
+        # 동값을 허용하면 «폴링 0초»·«마감이 곧 발송» 같은 위반이 초록으로 샌다 → 엄격 부등호.
+        for lo, hi, why in [
+            (send_at, poll, "발송목표 < 폴링데드라인"),
+            (poll, token, "폴링데드라인 < 토큰마감"),
+            (token, late, "토큰마감 < LATE_HM"),
+        ]:
+            self.assertLess(lo, hi, f"{why} 가 깨졌다: {lo} !< {hi}")
+        self.assertLessEqual(PREOPEN_ANTC_START_HM, send_at, "발송이 공표 개시보다 이르다")
+        self.assertLessEqual(late, cron, "백업 cron 이 LATE_HM 보다 이르다")
+        self.assertLess(cron, 900, f"백업 cron 이 개장(09:00) 을 넘었다: {cron}")
+
+    def test_publication_start_is_measured_value(self):
+        """850 은 실측치다(2026-08-20·21 이틀). 순서 검사만으로는 840 회귀를 못 잡는다."""
+        self.assertEqual(PREOPEN_ANTC_START_HM, 850, "공표 개시 실측치 — 2026-08-20·21 이틀 관측")
+
+    def test_gas_window_fits_wait_guard(self):
+        """`wait_until_send_time` 의 max_wait_min 안에 GAS 발화창(08:20~)이 들어와야 한다.
+
+        벗어나면 대기를 건너뛰고 창 밖 판정 → **예외도 없이 무발송**으로 끝난다.
+        """
+        self._need_workflow()
+        sim = os.path.join(self._HERE, "tiger_etf_simulator.py")
+        send_at = self._grab(self._FLOW, self._SEND_AT_RE)
+        max_wait = self._grab(sim, r"def wait_until_send_time\(target_hm, max_wait_min=(\d+)\)")
+        earliest = (send_at // 100) * 60 + (send_at % 100) - max_wait  # 대기가 시작되는 하한(분)
+        self.assertLessEqual(earliest, 8 * 60 + 20, "GAS 창 시작(08:20)이 대기 가드 밖이다")
+
+    def test_watch_markers_match_simulator(self):
+        """감시가 찾는 문구 6종이 시뮬레이터 print 와 글자 단위로 일치해야 한다.
+
+        어긋나면 예외도 실패도 없이 «마커를 영영 못 찾는» 상태가 된다.
+        """
+        with open(os.path.join(self._HERE, "tiger_etf_simulator.py"), encoding="utf-8") as f:
+            sim_src = f.read()
+        for name in ("MARK_SENT", "MARK_SEND_FAIL", "MARK_CLOSED", "MARK_DEADLINE", "MARK_POLL", "MARK_GOT"):
+            marker = getattr(check_morning_send, name)
+            # assertIn 은 실패 시 95KB 소스를 통째로 덤프한다 → 읽을 수 있는 메시지로 바꾼다.
+            self.assertTrue(marker in sim_src, f"{name} 불일치: {marker!r} 가 시뮬레이터에 없다")
 
 
 if __name__ == "__main__":

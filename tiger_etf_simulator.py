@@ -99,15 +99,17 @@ EXCD_MAP = {
 
 ETF_CODE = "0183J0"
 
-# 🔴 예상체결가(antc_cnpr) 공표 개시 시각 — KRX 는 **08:40~09:00** 에만 이 값을 만든다.
-#   08:30~08:40 은 동시호가가 아니라 **장전 시간외 종가매매** 구간이라 antc_cnpr 이 존재하지 않는다.
-#   종전엔 이 자리에 `830` 리터럴이 3곳(네이버 폴백 게이트·본류 창판정 ×2)에 흩어져 있었고,
-#   그래서 수집창이 08:30~08:38 로 잡혀 **존재하지 않는 값을 29거래일 × 하루 32회 ≈ 930회** 조회했다
-#   (간헐 결함이 아니라 100% 결정론적 실패 — 코드가 정상 동작할수록 실패한다. 2026-08-13 규명).
-#   ⚠️ 이 값을 830 으로 되돌리지 마라. "호가접수 시작"이 아니라 "예상체결가 공표 시작"이다.
+# 🔴 예상체결가(antc_cnpr) 공표 개시 시각 = **08:50:00 (2026-08-21 실측 확정)**.
+#   08:30~08:50 에는 이 값이 아예 존재하지 않는다 — KIS 는 `rt_cd=0` 정상응답에 값만 0 으로 준다.
+#   **실측 근거**(진단 블록을 이틀 돌렸다. 30초 격자):
+#     08-20(목) 08:49:56 빈값 → 08:50:26 확보(8,660원) · 08-21(금) 08:49:58 빈값 → 08:50:28 확보(8,100원)
+#   두 날이 초 단위 격자까지 일치했다 ⇒ 개시는 **08:50 정각**이지 그날 유동성에 흔들리는 값이 아니다.
+#   ⚠️ **830·840 으로 되돌리지 마라.** 830 은 «호가접수 시작»(29거래일 0/29 의 원인),
+#      840 은 «KRX 가 08:40 부터 공표한다»는 **틀린 전제**였다(08:40~08:44 폴링 17회 × 2일 전부 빈손).
+#      두 번 다 «문서에 적힌 이유»를 실측 없이 믿어서 났다 — 되돌리기 전에 하루만 재라.
 #   ⚠️ 그리고 `--send-at` 을 이 값보다 이르게 두지 마라 — 그러면 발송 시점에 창 판정이 False 라
 #      폴링에 진입조차 못 하고 곧장 폴백으로 샌다(불변식: send-at ≥ PREOPEN_ANTC_START_HM).
-PREOPEN_ANTC_START_HM = 840
+PREOPEN_ANTC_START_HM = 850
 
 # 장전 동시호가 창의 끝(정규장 개장) — 위 상수와 짝이다.
 PREOPEN_END_HM = 900
@@ -156,9 +158,9 @@ def write_auction_sent_today(date_str, us_date=None):
 
 
 def wait_until_send_time(target_hm, max_wait_min=40):
-    """GitHub 예약은 정시 발화를 보장하지 않으므로, 워크플로를 08:30 '이전'에 깨워 두고
-    이 함수가 목표 전송시각(기본 08:40 KST)까지 정확히 대기했다가 보내게 한다 → 평소 08:40~08:41 도착.
-    (08:40 = 예상체결가 공표 개시. PREOPEN_ANTC_START_HM 주석 참조 — 더 이르게 두면 값이 없다.)
+    """GitHub 예약은 정시 발화를 보장하지 않으므로, 워크플로를 목표 전송시각 '이전'에 깨워 두고
+    이 함수가 목표 전송시각(기본 08:51 KST)까지 정확히 대기했다가 보내게 한다 → 평소 08:51~08:52 도착.
+    (08:50 = 예상체결가 공표 개시 실측치. PREOPEN_ANTC_START_HM 주석 참조 — 더 이르게 두면 값이 없다.)
     - 평일 + 목표시각 이전 + (목표까지 ≤max_wait_min)일 때만 대기한다.
     - 목표시각을 이미 지났으면 즉시 반환(지연 발화 시 곧장 진행 → 폴백/창내 전송 로직이 처리).
     - 너무 이르게(>max_wait_min) 깨어난 비정상 상황에선 대기하지 않는다(안전장치)."""
@@ -261,6 +263,13 @@ def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
 
+    def _hide(text, secret):
+        """로그에 나갈 문자열에서 봇 토큰을 가린다. repr escape 형태까지 지운다."""
+        s = str(text)
+        if not secret:  # replace("", …) 는 글자 사이마다 끼워 넣어 문자열을 망가뜨린다
+            return s
+        return s.replace(secret, "***").replace(repr(secret)[1:-1], "***")
+
     # 일시적 네트워크/텔레그램 장애에 대비해 최대 3회 재시도(2초·4초 백오프).
     for attempt in range(1, 4):  # 1, 2, 3
         try:
@@ -270,9 +279,13 @@ def send_telegram_message(message):
                 print("  ✅ 텔레그램 메시지 전송 성공!")
                 return True
             else:
-                print(f"  ❌ 텔레그램 메시지 전송 실패(시도 {attempt}/3): {res.text}")
+                print(f"  ❌ 텔레그램 메시지 전송 실패(시도 {attempt}/3): {_hide(res.text, bot_token)}")
         except Exception as e:
-            print(f"  ❌ 텔레그램 메시지 전송 중 오류 발생(시도 {attempt}/3): {e}")
+            # 🔴 `{e}` 를 그대로 찍지 마라 — 봇 토큰이 URL 경로에 박혀 있어(위 `url`) requests 의
+            #   연결 계열 예외가 요청 URL 을 통째로 싣는다 = 토큰이 평문으로 로그에 남는다.
+            #   CI 는 등록 시크릿을 가리지만 **로컬 `telegram_config.json` 실행엔 그 방어가 없다.**
+            #   같은 이유의 방어가 `check_morning_send.py` 의 `mask()` 에도 있다(2026-08-21 점검).
+            print(f"  ❌ 텔레그램 메시지 전송 중 오류 발생(시도 {attempt}/3): {_hide(e, bot_token)}")
         if attempt < 3:
             wait = 2 * attempt  # 2초, 4초 백오프
             print(f"  ⏳ {wait}초 후 재전송 시도")
@@ -753,7 +766,7 @@ def get_etf_expected_open(token, retry=3):
                     f"  ⚠ antc_cnpr 빈값 (rt_cd=0 정상응답 · 장운영코드="
                     f"{(o2.get('antc_mkop_cls_code') or '').strip() or '없음'} · "
                     f"호가접수시각={(o2.get('aspr_acpt_hour') or '').strip() or '없음'}) "
-                    f"— 공표 전(08:40 이전)이면 정상이다"
+                    f"— 공표 전(08:50 이전)이면 정상이다"
                 )
                 return None
             return {
@@ -989,7 +1002,7 @@ def should_poll_auction(
     Args:
         auction_only: --auction-only 플래그.
         no_telegram: --no-telegram 플래그.
-        in_preopen_auction: 현재 시각이 평일 08:30~09:00 구간인지 여부.
+        in_preopen_auction: 현재 시각이 평일 08:50~09:00(예상체결가 공표 구간)인지 여부.
         antc: get_etf_expected_open() 반환값(None 또는 dict).
     """
     return (
@@ -1012,11 +1025,11 @@ def decide_auction_send(
         ① 유효 antc → 'send_real'
         ② 정시 주 실행(폴링 수행)인데 미확보 → 'send_fallback_primary'
         ③ 창 종료(09:00 이후) 뒤늦은 실행 → 'send_fallback_late'
-        ④ 그 외(08:30 전 조기 실행) → 'skip'
+        ④ 그 외(공표 개시 08:50 전 조기 실행) → 'skip'
 
     Args:
         expected_open_valid: antc_cnpr 가 유효한지 여부(expected_open is not None).
-        auction_primary_attempted: 08:30~09:00 창 안에서 폴링까지 수행한 정시 주 실행 여부.
+        auction_primary_attempted: 08:50~09:00 창 안에서 폴링까지 수행한 정시 주 실행 여부.
         after_auction_window: 평일 09:00 이후 여부.
     """
     if expected_open_valid:
@@ -1045,7 +1058,7 @@ def should_send_naver_fallback(
 
     KIS 경로가 막혔을 때 네이버 closePriceRaw 를 '예상 시가'로 내보내도 되는지 판정한다.
     세 조건을 모두 만족해야 True:
-      ① in_preopen_auction  : 평일(월~금) 08:30~09:00 KST 창 안(호출부 in_preopen_auction 재사용).
+      ① in_preopen_auction  : 평일(월~금) 08:50~09:00 KST 창 안(호출부 in_preopen_auction 재사용).
       ② market_status       : 네이버 장 상태가 장전 동시호가 계열(NAVER_PREOPEN_STATUSES).
                               이 창 밖·장중(OPEN)·장마감(CLOSE)·불명이면 closePriceRaw 가
                               예상 시가가 아니라 현재가/종가이므로 오전송 방지 위해 False.
@@ -1053,7 +1066,7 @@ def should_send_naver_fallback(
     셋 중 하나라도 어긋나면 조용히 보류(False) — 환각 전송 금지.
 
     Args:
-        in_preopen_auction: 현재 시각이 평일 08:30~09:00 KST 창 안인지 여부.
+        in_preopen_auction: 현재 시각이 평일 08:50~09:00 KST 창 안인지 여부.
         market_status: get_naver_expected_open() 이 반환한 marketStatus(대소문자 무관).
         expected_price: 네이버 예상체결가(원). None/0/음수면 무효.
     """
@@ -1085,8 +1098,8 @@ def _run_naver_auction_fallback(no_telegram, now_kst, today_kst_str):
     if naver is None or naver.get("expected_price", 0) <= 0:
         print("  ⚠ 네이버 예상체결가도 확보 실패 → 전송할 값 없음, 조용히 종료.")
         return
-    # 시간창 판정은 본류와 동일 로직을 재사용: 평일 08:40~09:00 KST.
-    #   🔴 830 이었을 때 8/6 실사고 — 08:30~08:40 에 돌면 네이버 `closePriceRaw` 가 예상 시가가
+    # 시간창 판정은 본류와 동일 로직을 재사용: 평일 08:50~09:00 KST.
+    #   🔴 830 이었을 때 8/6 실사고 — 공표 개시 전에 돌면 네이버 `closePriceRaw` 가 예상 시가가
     #   아니라 **전일 종가**라, 그것을 "예상 시가"로 오전송했다.
     #   공표 개시 전에는 폴백도 돌면 안 된다.
     _kst_hm = now_kst.hour * 100 + now_kst.minute
@@ -1453,10 +1466,10 @@ def main():
     )
     parser.add_argument(
         "--send-at",
-        default="0840",
-        help="auction-only 시 목표 전송시각(HHMM, KST, 기본 0840). 이 시각 이전에 깨어난 평일 실행은 "
-        "목표시각까지 대기했다가 전송 → 평소 08:40~08:41 도착. "
-        "⚠️ PREOPEN_ANTC_START_HM(840)보다 이르게 두지 말 것 — 예상체결가는 08:40 부터만 존재한다.",
+        default="0851",
+        help="auction-only 시 목표 전송시각(HHMM, KST, 기본 0851). 이 시각 이전에 깨어난 평일 실행은 "
+        "목표시각까지 대기했다가 전송 → 평소 08:51~08:52 도착. "
+        "⚠️ PREOPEN_ANTC_START_HM(850)보다 이르게 두지 말 것 — 예상체결가는 08:50 부터만 존재한다.",
     )
     parser.add_argument(
         "--no-kakao", action="store_true", help=argparse.SUPPRESS
@@ -1497,7 +1510,7 @@ def main():
         )
         return
 
-    # 08:40 전송: GitHub 가 그 전에 깨워 줬으면 08:40:00 까지 대기했다가 진행(antc 도 그때 신선하게 수집).
+    # 08:51 전송: GitHub 가 그 전에 깨워 줬으면 08:51:00 까지 대기했다가 진행(antc 도 그때 신선하게 수집).
     if auction_only:
         try:
             target_hm = int(args.send_at)
@@ -1517,16 +1530,17 @@ def main():
     print(f"\n🚀 TIGER 미국우주테크 ETF 시뮬레이터 — KIS API 단독 (모드: {mode_label})\n")
 
     # KIS 토큰 발급. auction_only 모드에선 실패해도 크래시 없이 네이버 폴백으로 흘러야 하므로
-    #   ① 전송창 마감(08:44 KST)까지 재시도를 지속하고(일시적 KIS 끊김 회복),
+    #   ① 전송창 마감(08:55 KST)까지 재시도를 지속하고(일시적 KIS 끊김 회복),
     #   ② 그래도 실패하면 예외를 삼키고 네이버 예상체결가 폴백 경로로 넘어간다.
     #   일반 모드는 기존대로(실패 시 예외로 종료) 정확도 로직에 영향 주지 않는다.
     if auction_only:
         try:
-            # deadline_hm=846: 전송창 마감(08:46 KST)까지 토큰 재시도.
-            #   send-at 기본 840 + 폴링 데드라인 844 이후 여유 2분을 둔 값이다.
-            #   🔴 불변식: 발송 목표(840) < 폴링 데드라인(844) < 토큰 마감(846).
-            #   send-at 이나 폴링 데드라인을 바꾸면 이 관계를 함께 조정할 것.
-            token = get_token(deadline_hm=846)
+            # deadline_hm=855: 전송창 마감(08:55 KST)까지 토큰 재시도.
+            #   send-at 기본 851 + 폴링 데드라인 853 이후 여유 2분을 둔 값이다.
+            #   🔴 불변식: 발송 목표(851) < 폴링 데드라인(853) < 토큰 마감(855).
+            #   send-at 이나 폴링 데드라인을 바꾸면 이 관계를 함께 조정할 것
+            #   (`test_auction_gate.TestTimeConstantInvariant` 가 6곳을 소스에서 읽어 검사한다).
+            token = get_token(deadline_hm=855)
         except Exception as e:
             print(f"  ⚠ KIS 토큰 발급 실패({type(e).__name__}) → 네이버 예상체결가 폴백 시도")
             # 정확도 로그: 헤더 보장 + 과거 빈 행 백필(토큰 없으니 네이버 소스). best-effort.
@@ -1626,8 +1640,8 @@ def main():
 
     # 1-c. KIS 예상체결가(antc_cnpr) 수집 — 장전 동시호가(8:30~09:00)의 '시장 예상 시가'.
     #   antc_cnpr 는 '동시호가 시간에만' 예상 시가 의미를 가진다(그 외엔 현재가로 나옴).
-    #   → KST 평일 08:40~09:00(예상체결가 공표 구간)일 때만 유효로 본다. 무효면 폴백.
-    #   [폴링 보강] auction_only + 공표 구간 안 + antc가 아직 0/빈값이면 최대 08:44 KST 까지
+    #   → KST 평일 08:50~09:00(예상체결가 공표 구간)일 때만 유효로 본다. 무효면 폴백.
+    #   [폴링 보강] auction_only + 공표 구간 안 + antc가 아직 0/빈값이면 최대 08:53 KST 까지
     #   15초 간격으로 재조회한다. GAS 단일 디스패치 1회 실행이 08:30:00 정각에 창에 진입했을 때
     #   KIS 가 아직 예상체결가를 0으로 내려줄 수 있으므로 창 안에서 재시도해 유효값을 확보한다.
     print("\n🕗 KIS 예상체결가(antc_cnpr·장전 동시호가) 수집 중...")
@@ -1639,25 +1653,25 @@ def main():
     kst_hm = now_kst.hour * 100 + now_kst.minute
     in_preopen_auction = (now_kst.weekday() < 5) and (
         PREOPEN_ANTC_START_HM <= kst_hm < PREOPEN_END_HM
-    )  # 평일 08:40~09:00 (예상체결가 공표 구간)
+    )  # 평일 08:50~09:00 (예상체결가 공표 구간)
     antc = get_etf_expected_open(token)
 
     # 폴링 진입 조건: auction_only + --no-telegram 없음 + 창 안 + antc 미확보 상태
     _need_poll = should_poll_auction(auction_only, no_telegram, in_preopen_auction, antc)
     if _need_poll:
         auction_primary_attempted = True
-        # 08:44:00 KST 를 폴링 데드라인으로 삼는다.
-        #   🔴 종전 08:38 은 **공표 개시(08:40) 2분 전**이라 구조적으로 빈손이었다 — 이 한 줄이
-        #   29거래일 0/29 의 직접 원인이다(2026-08-13 규명).
-        #   08:54 실측에선 rt_cd=0·antc_cnpr=8975 로 정상이었다 — 엔드포인트·권한 문제가 아니다.
+        # 08:53:00 KST 를 폴링 데드라인으로 삼는다.
+        #   🔴 종전 두 값은 **공표 개시(08:50) 전**이라 구조적으로 빈손이었다 — 08:38 은 29거래일
+        #   0/29 의 직접 원인이었고(2026-08-13), 08:44 도 17회 × 2일 전부 빈값이었다(2026-08-19).
+        #   개시가 08:50 정각으로 실측된 지금 폴링은 «혹시 늦어질 때»의 안전망일 뿐이라 3분이면 된다.
         #   불변식: 발송목표(--send-at) < 폴링 데드라인 < 토큰 마감(get_token deadline_hm).
-        _poll_deadline = now_kst.replace(hour=8, minute=44, second=0, microsecond=0)
+        _poll_deadline = now_kst.replace(hour=8, minute=53, second=0, microsecond=0)
         _poll_try = 1
-        print("  ⏳ antc_cnpr 아직 0/미생성 — 동시호가 폴링 시작 (데드라인 08:44 KST, 15초 간격)")
+        print("  ⏳ antc_cnpr 아직 0/미생성 — 동시호가 폴링 시작 (데드라인 08:53 KST, 15초 간격)")
         while True:
             _now = datetime.datetime.now(kst_tz_antc)
             if _now >= _poll_deadline:
-                print("  ⏳ 폴링 데드라인(08:44) 도달 — antc_cnpr 끝내 미확보, 폴백으로 진행.")
+                print("  ⏳ 폴링 데드라인(08:53) 도달 — antc_cnpr 끝내 미확보, 폴백으로 진행.")
                 break
             time.sleep(15)
             _poll_try += 1
@@ -1687,7 +1701,7 @@ def main():
             )
         else:
             reason = (
-                "동시호가 시간(평일 08:30~09:00) 아님"
+                "예상체결가 공표 구간(평일 08:50~09:00) 아님"
                 if not in_preopen_auction
                 else "antc_cnpr 빈값"
             )
@@ -2083,12 +2097,12 @@ def main():
 
         print(f"\n[텔레그램 전송 메시지 내용]\n{telegram_msg}\n")
         # --auction-only 전송 게이트. 하루 1회, 가능한 한 '진짜 예상체결가'로.
-        #   ① 공표 구간(08:40~09:00) + 유효 antc_cnpr → 시장 예상 시가로 전송(최우선).
+        #   ① 공표 구간(08:50~09:00) + 유효 antc_cnpr → 시장 예상 시가로 전송(최우선).
         #   ② 창 안에서 폴링까지 수행한 '정시 주 실행'(auction_primary_attempted=True)이지만
-        #      08:44 데드라인까지 antc_cnpr 를 못 받은 경우 → 폴백 추정으로 그 자리에서 전송.
+        #      08:53 데드라인까지 antc_cnpr 를 못 받은 경우 → 폴백 추정으로 그 자리에서 전송.
         #      (GAS 단일 디스패치 1회 실행이므로 "다음 예약"을 기다리면 메시지가 오지 않는다.)
         #   ③ 창 종료(09:00 이후)인데 아직 미발송 → 뒤늦은 cron 백업 실행이 폴백으로 최후 1회 전송.
-        #   ④ 창 이전(08:30 전) — wait_until_send_time() 이 처리하므로 사실상 도달 불가(안전장치만).
+        #   ④ 창 이전(공표 개시 08:50 전) — wait_until_send_time() 이 처리하므로 사실상 도달 불가(안전장치만).
         send_hm = now_kst.hour * 100 + now_kst.minute
         after_auction_window = now_kst.weekday() < 5 and send_hm >= 900  # 평일 09:00 이후
         if no_telegram:
@@ -2127,7 +2141,7 @@ def main():
             elif _gate == "send_fallback_late":
                 # ③ 뒤늦은 cron 백업 실행 — 창 닫힌 후 도착한 실행이 최후 1회 전송
                 print(
-                    "  ⏳ 동시호가 창(08:30~09:00) 종료·예상체결가 못 받음 → "
+                    "  ⏳ 공표 구간(08:50~09:00) 종료·예상체결가 못 받음 → "
                     "폴백 추정으로 최후 1회 전송(메시지 누락 방지)."
                 )
                 if send_telegram_message(telegram_msg):
@@ -2141,45 +2155,14 @@ def main():
                         note="뒤늦은 폴백(창 종료)",
                     )
             else:  # 'skip'
-                # ④ 창 이전(08:30 전) 비정상 조기 실행 — wait 가 처리하므로 사실상 도달 불가
+                # ④ 창 이전(공표 개시 08:50 전) 비정상 조기 실행 — wait 가 처리하므로 사실상 도달 불가
                 print(
-                    "  ⏳ 동시호가 창(08:30~09:00) 이전 — 대기 후 재진행 예정(조기 실행 안전장치)."
+                    "  ⏳ 공표 구간(08:50~09:00) 이전 — 대기 후 재진행 예정(조기 실행 안전장치)."
                 )
         else:
             send_telegram_message(telegram_msg)
     except Exception as e:
         print(f"  ❌ 텔레그램 전송 준비 중 오류 발생: {e}")
-
-    # ── 진단(2026-08-19 한시) — antc_cnpr 공표 «개시 시각» 실측 ─────────────────
-    #   왜: 08:40~08:44 폴링이 2거래일 연속 빈손인데(17회 × 2일), 이 파일에 남은 유일한
-    #   성공 관측은 위 폴링 주석의 **08:54** 뿐이다. 개시 시각이 08:44 이후인 것은 확실한데
-    #   **정확히 언제인지는 아무도 모른다.** 발송 시각을 또 추측으로 옮기면 08:30 → 08:40 에
-    #   이은 **세 번째 실패**가 난다(그때마다 한 달이 든다). 한 아침만 재고 끝낸다.
-    #   🔴 **전송이 끝난 뒤에만 돈다 — 알림 도착 시각에 영향이 없다.** 값을 찾으면 즉시 멈춘다.
-    #   ⚠️ 워크플로 timeout-minutes(35 · 08:24 기동 → 08:59) 안에 끝나야 해 **08:56 하드 상한**이다.
-    #   ✅ **걷어낼 조건**: 개시 시각이 한 번 찍히면 이 블록을 통째로 지우고 그 값으로
-    #      PREOPEN_ANTC_START_HM·폴링 데드라인을 다시 세운다(시각 상수 5곳 불변식을 함께 볼 것).
-    try:
-        _kst = datetime.timezone(datetime.timedelta(hours=9))
-        _now = datetime.datetime.now(_kst)
-        if auction_only and _now.weekday() < 5 and 844 <= _now.hour * 100 + _now.minute < 856:
-            _limit = _now.replace(hour=8, minute=56, second=0, microsecond=0)
-            print("\n🔬 [진단] antc_cnpr 공표 개시 시각 실측 — 30초 간격 · 08:56 상한 (전송 후라 알림 무영향)")
-            while datetime.datetime.now(_kst) < _limit:
-                _a = get_etf_expected_open(token)
-                _hms = datetime.datetime.now(_kst).strftime("%H:%M:%S")
-                if _a is not None and _a.get("antc_cnpr", 0) > 0:
-                    print(
-                        f"  🔬 최초 확보 {_hms} — antc_cnpr={_a['antc_cnpr']:,.0f}원 "
-                        f"예상거래량={_a['antc_vol']:,.0f}주"
-                    )
-                    break
-                print(f"  🔬 {_hms} 아직 빈값")
-                time.sleep(30)
-            else:
-                print("  🔬 08:56 까지도 미확보 — 「08:54 면 나온다」는 관측부터 다시 세울 것")
-    except Exception as _e:  # 진단이 본 작업을 죽이지 않게(전송은 이미 끝났다)
-        print(f"  🔬 [진단] 건너뜀({type(_e).__name__}) — 본 작업에는 영향 없다")
 
 
 if __name__ == "__main__":
