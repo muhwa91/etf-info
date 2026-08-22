@@ -9,9 +9,14 @@ ETF 전송 게이트 회귀 방지 단위 테스트
              반드시 send_fallback_primary 반환 → 절대 skip 되지 않는다.
 """
 
+import contextlib
+import io
 import os
 import re
 import unittest
+from unittest import mock
+
+import requests
 
 # 모듈 최상단에서 환경변수·파일 접근은 있으나 네트워크 호출은 없음.
 # if __name__ == "__main__" 가드로 main() 자동 실행 없음 → import 안전.
@@ -24,6 +29,7 @@ from tiger_etf_simulator import (
     decide_auction_send,
     is_backfill_target,
     parse_naver_daily,
+    send_telegram_message,
     should_poll_auction,
     should_send_naver_fallback,
 )
@@ -595,6 +601,42 @@ class TestTimeConstantInvariant(unittest.TestCase):
             marker = getattr(check_morning_send, name)
             # assertIn 은 실패 시 95KB 소스를 통째로 덤프한다 → 읽을 수 있는 메시지로 바꾼다.
             self.assertTrue(marker in sim_src, f"{name} 불일치: {marker!r} 가 시뮬레이터에 없다")
+
+
+
+# ---------------------------------------------------------------------------
+# 봇 토큰이 로그로 새지 않는가 — 예외 경로는 --no-telegram 으로 안 닿는다
+# ---------------------------------------------------------------------------
+class TestTelegramTokenMasking(unittest.TestCase):
+    """전송 예외 메시지에 봇 토큰이 평문으로 남으면 안 된다.
+
+    토큰이 URL 경로에 박혀 있어(`.../bot<TOKEN>/sendMessage`) requests 의 연결 계열
+    예외는 요청 URL 을 통째로 싣는다. CI 는 등록 시크릿을 가리지만 **로컬
+    `telegram_config.json` 실행엔 그 방어가 없다.**
+    """
+
+    def test_exception_message_does_not_leak_bot_token(self):
+        # ⚠️ 진짜 토큰 형태(`숫자:AA…`)로 쓰지 마라 — 이 파일은 공개 미러로 나가고,
+        #   GitHub 시크릿 스캐너가 텔레그램 봇 토큰으로 오탐해 push 를 막는다.
+        #   `_hide` 는 단순 치환이라 문자열 형태와 무관하게 같은 것을 검증한다.
+        token = "NOT-A-REAL-TOKEN-fixture-for-masking-test"
+        boom = requests.exceptions.ConnectionError(
+            "HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded "
+            f"with url: /bot{token}/sendMessage (Caused by NewConnectionError)"
+        )
+        buf = io.StringIO()
+        env = {"TELEGRAM_BOT_TOKEN": token, "TELEGRAM_CHAT_ID": "42"}
+        with (
+            mock.patch.dict(os.environ, env),
+            mock.patch("requests.post", side_effect=boom),
+            mock.patch("time.sleep"),  # 2s+4s 백오프를 기다리지 않는다
+            contextlib.redirect_stdout(buf),
+        ):
+            sent = send_telegram_message("테스트 메시지")
+        out = buf.getvalue()
+        self.assertFalse(sent, "전송이 실패했는데 True 를 돌려줬다")
+        self.assertNotIn(token, out, "봇 토큰이 로그에 평문으로 남았다")
+        self.assertIn("***", out, "마스킹 자리표시자가 없다 — _hide 가 안 걸렸다")
 
 
 if __name__ == "__main__":
