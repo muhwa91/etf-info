@@ -14,7 +14,7 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 
 1. GitHub → 우상단 프로필 → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**
 2. 설정:
-   - **Repository access**: Only select repositories → **`muhwa91/chiikawa_dev`**
+   - **Repository access**: Only select repositories → **`<owner>/<repo>`** (워크플로가 있는 레포)
    - **Permissions → Repository permissions → Actions: Read and write**
    - (Metadata: Read-only 는 자동 포함)
    - Expiration: 원하는 기간(예: 1년)
@@ -27,12 +27,18 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 3. 좌측 **프로젝트 설정()** → **시간대(Time zone)** 를 **(GMT+09:00) Seoul** 로 변경
 4. `Code.gs` 내용을 지우고, 이 폴더의 **`dispatch.gs`** 내용을 통째로 붙여넣기 → 저장
 
-## 3. 토큰 등록 (Script Properties)
+## 3. 설정 등록 (Script Properties) — 2개 필수
 
-1. 좌측 **프로젝트 설정()** → 아래쪽 **스크립트 속성(Script properties)** → **속성 추가**
-   - 속성: `GH_TOKEN`
-   - 값: 1번에서 복사한 토큰
+토큰과 **레포명**은 코드에 두지 않는다(코드는 공개 미러로 나간다). 둘 다 스크립트 속성에만 넣는다.
+
+1. 좌측 **프로젝트 설정** → 아래쪽 **스크립트 속성(Script properties)** → **속성 추가**
+   - 속성: `GH_TOKEN` / 값: 1번에서 복사한 토큰
+   - 속성: `GH_REPO` / 값: 1번 **Repository access** 에서 고른 그 레포의 **이름 부분**(`소유자/이름` 중 `/` 뒤)
 2. 저장
+
+> 둘 중 하나라도 비어 있으면 디스패치는 **조용히 넘어가지 않고 예외로 죽는다** — 실행 로그와
+> 트리거 실패 알림 메일에 `Script Properties 에 GH_REPO 가 없습니다…` 가 남는다. (조용한 실패 = 매일 아침
+> 메시지가 안 오는데 아무도 모름 → 금지)
 
 ## 4. 트리거 등록 & 권한 승인
 
@@ -95,5 +101,6 @@ GitHub 예약(cron)은 정시 발화를 보장하지 않아 지연됩니다(실�
 - `clasp push` 는 **원격을 로컬과 똑같이 맞춘다**(로컬에 없는 서버 파일은 삭제). `.claspignore` 로
   **`etf_info.js` + `appsscript.json` 만** 푸시되도록 화이트리스트해 둠(node_modules 사고 방지).
 - 동작 중인 서버 코드는 `clasp pull` 로 내려받아 단일 원본 `etf_info.js` 로 채택했다(예전 사본 `dispatch.gs` 는 제거 — 내용 동일).
-- **푸시는 코드/매니페스트만 바꾼다.** 등록한 **시간 트리거·Script Properties(`GH_TOKEN`)** 는 그대로 유지된다.
+- **푸시는 코드/매니페스트만 바꾼다.** 등록한 **시간 트리거·Script Properties(`GH_TOKEN`·`GH_REPO`)** 는 그대로 유지된다.
+  ⚠️ 그래서 **속성을 먼저 넣고 → 그 다음 `npx clasp push`** 순서로 한다(반대로 하면 그 사이 트리거가 예외로 죽는다).
 - 토큰 등 비밀은 절대 `.gs`/깃에 넣지 말 것 → Script Properties 에만.

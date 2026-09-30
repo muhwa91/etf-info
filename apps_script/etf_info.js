@@ -1,6 +1,6 @@
 // etf-info — GAS 알람: 평일 아침 GitHub 워크플로를 workflow_dispatch 로 깨운다.
 var GH_OWNER = 'muhwa91';
-var GH_REPO = 'chiikawa_dev';
+// 레포명은 소스에 두지 않는다(공개 미러 유출) → Script Properties 의 GH_REPO. README 3번 참고.
 var GH_WORKFLOW = 'etf_simulator.yml';
 var GH_REF = 'main';
 var TZ = 'Asia/Seoul';
@@ -22,10 +22,20 @@ function tickDispatchEtf() {
   }
 }
 
+// 설정 누락은 조용히 넘기지 않고 던진다 — return 하면 매일 아침 디스패치가 죽어도 아무도 모른다.
+// 던지면 GAS 실행 로그에 남고 트리거 실패 알림 메일이 온다.
+function requiredProp_(name) {
+  var v = PropertiesService.getScriptProperties().getProperty(name);
+  if (!v) {
+    throw new Error('Script Properties 에 ' + name + ' 가 없습니다. ' +
+      'GAS 편집기 → 프로젝트 설정 → 스크립트 속성 → 속성 추가 로 등록하세요.');
+  }
+  return v;
+}
+
 function dispatchGithub_() {
-  var token = PropertiesService.getScriptProperties().getProperty('GH_TOKEN');
-  if (!token) { Logger.log('GH_TOKEN 미설정'); return false; }
-  var url = 'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO +
+  var token = requiredProp_('GH_TOKEN');
+  var url = 'https://api.github.com/repos/' + GH_OWNER + '/' + requiredProp_('GH_REPO') +
             '/actions/workflows/' + GH_WORKFLOW + '/dispatches';
   var res = UrlFetchApp.fetch(url, {
     method: 'post',
