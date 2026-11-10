@@ -284,7 +284,6 @@ def send_telegram_message(message):
             # 🔴 `{e}` 를 그대로 찍지 마라 — 봇 토큰이 URL 경로에 박혀 있어(위 `url`) requests 의
             #   연결 계열 예외가 요청 URL 을 통째로 싣는다 = 토큰이 평문으로 로그에 남는다.
             #   CI 는 등록 시크릿을 가리지만 **로컬 `telegram_config.json` 실행엔 그 방어가 없다.**
-            #   같은 이유의 방어가 `check_morning_send.py` 의 `mask()` 에도 있다(2026-08-21 점검).
             print(f"  ❌ 텔레그램 메시지 전송 중 오류 발생(시도 {attempt}/3): {_hide(e, bot_token)}")
         if attempt < 3:
             wait = 2 * attempt  # 2초, 4초 백오프

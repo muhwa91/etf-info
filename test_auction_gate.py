@@ -20,7 +20,6 @@ import requests
 
 # 모듈 최상단에서 환경변수·파일 접근은 있으나 네트워크 호출은 없음.
 # if __name__ == "__main__" 가드로 main() 자동 실행 없음 → import 안전.
-import check_morning_send
 from tiger_etf_simulator import (
     PREOPEN_ANTC_START_HM,
     SESSION,
@@ -515,10 +514,10 @@ class TestSessionRetry(unittest.TestCase):
 # 시각 상수 6곳 불변식 — 하나만 고치면 조용히 깨지는 자리
 # ---------------------------------------------------------------------------
 class TestTimeConstantInvariant(unittest.TestCase):
-    """공표개시 ≤ 발송목표 < 폴링데드라인 < 토큰마감 < LATE_HM ≤ 백업cron.
+    """공표개시 ≤ 발송목표 < 폴링데드라인 < 토큰마감 ≤ 백업cron < 개장.
 
     두 번 깨졌고 두 번 다 «한 달치 antc 0건» 으로 나타났다(2026-08-13 · 2026-08-19).
-    상수가 3개 파일(시뮬레이터·감시·워크플로)에 흩어져 있어 리뷰로는 안 잡힌다 —
+    상수가 2개 파일(시뮬레이터·워크플로)에 흩어져 있어 리뷰로는 안 잡힌다 —
     소스에서 직접 읽어 순서를 본다.
 
     🔴 **읽는 값은 «프로덕션이 실제로 쓰는 것»이어야 한다** — argparse 기본값만 보면
@@ -553,13 +552,11 @@ class TestTimeConstantInvariant(unittest.TestCase):
     def test_invariant_chain(self):
         self._need_workflow()
         sim = os.path.join(self._HERE, "tiger_etf_simulator.py")
-        watch = os.path.join(self._HERE, "check_morning_send.py")
 
         send_at = self._grab(self._FLOW, self._SEND_AT_RE)  # 🔴 프로덕션 실인자
         default_at = self._grab(sim, r'"--send-at",\s*\n\s*default="(\d{4})"')
         poll = 800 + self._grab(sim, r"_poll_deadline = now_kst\.replace\(hour=8, minute=(\d+)")
         token = self._grab(sim, r"get_token\(deadline_hm=(\d+)\)")
-        late = self._grab(watch, r"^LATE_HM = (\d+)$")
         cron = 800 + self._grab(self._FLOW, r"cron: '(\d+) 23 ")  # UTC 23시대 = KST 08시대
 
         self.assertEqual(send_at, default_at, "워크플로 인자와 argparse 기본값이 갈렸다")
@@ -567,11 +564,10 @@ class TestTimeConstantInvariant(unittest.TestCase):
         for lo, hi, why in [
             (send_at, poll, "발송목표 < 폴링데드라인"),
             (poll, token, "폴링데드라인 < 토큰마감"),
-            (token, late, "토큰마감 < LATE_HM"),
         ]:
             self.assertLess(lo, hi, f"{why} 가 깨졌다: {lo} !< {hi}")
         self.assertLessEqual(PREOPEN_ANTC_START_HM, send_at, "발송이 공표 개시보다 이르다")
-        self.assertLessEqual(late, cron, "백업 cron 이 LATE_HM 보다 이르다")
+        self.assertLessEqual(token, cron, "백업 cron 이 토큰마감보다 이르다")
         self.assertLess(cron, 900, f"백업 cron 이 개장(09:00) 을 넘었다: {cron}")
 
     def test_publication_start_is_measured_value(self):
@@ -589,19 +585,6 @@ class TestTimeConstantInvariant(unittest.TestCase):
         max_wait = self._grab(sim, r"def wait_until_send_time\(target_hm, max_wait_min=(\d+)\)")
         earliest = (send_at // 100) * 60 + (send_at % 100) - max_wait  # 대기가 시작되는 하한(분)
         self.assertLessEqual(earliest, 8 * 60 + 20, "GAS 창 시작(08:20)이 대기 가드 밖이다")
-
-    def test_watch_markers_match_simulator(self):
-        """감시가 찾는 문구 6종이 시뮬레이터 print 와 글자 단위로 일치해야 한다.
-
-        어긋나면 예외도 실패도 없이 «마커를 영영 못 찾는» 상태가 된다.
-        """
-        with open(os.path.join(self._HERE, "tiger_etf_simulator.py"), encoding="utf-8") as f:
-            sim_src = f.read()
-        for name in ("MARK_SENT", "MARK_SEND_FAIL", "MARK_CLOSED", "MARK_DEADLINE", "MARK_POLL", "MARK_GOT"):
-            marker = getattr(check_morning_send, name)
-            # assertIn 은 실패 시 95KB 소스를 통째로 덤프한다 → 읽을 수 있는 메시지로 바꾼다.
-            self.assertTrue(marker in sim_src, f"{name} 불일치: {marker!r} 가 시뮬레이터에 없다")
-
 
 
 # ---------------------------------------------------------------------------
